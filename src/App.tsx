@@ -15,7 +15,7 @@ import {
   Menu,
   Users,
 } from 'lucide-react';
-import type { Lead, User, OutcomeTag, Priority } from './types';
+import type { Lead, User, OutcomeTag, Priority, PinnedComment } from './types';
 import { api, setStoredToken } from './lib/api';
 import { Sidebar, type AppView } from './components/Sidebar';
 import { LoginModal } from './components/LoginModal';
@@ -64,6 +64,9 @@ export default function App() {
   // Leads dataset
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
+
+  // Directives / Pinned comments
+  const [pinnedComments, setPinnedComments] = useState<PinnedComment[]>([]);
 
   // Filter & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -139,14 +142,31 @@ export default function App() {
     }
   }, [currentUser]);
 
+  const fetchPinnedComments = useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const res = await api.getPinnedComments();
+      setPinnedComments(res.comments || []);
+    } catch {
+      setPinnedComments([]);
+    }
+  }, [currentUser]);
+
+  const handleCommentStatusUpdated = (commentId: string, newStatus: 'acknowledged' | 'done') => {
+    setPinnedComments((prev) =>
+      prev.map((c) => (c.id === commentId ? { ...c, status: newStatus } : c))
+    );
+  };
+
   useEffect(() => {
     if (currentUser) {
       fetchLeads();
+      fetchPinnedComments();
       api.getPotentialCustomers()
         .then((res) => setPotentialCustomersCount(res.customers?.length || 0))
         .catch(() => {});
     }
-  }, [currentUser, fetchLeads]);
+  }, [currentUser, fetchLeads, fetchPinnedComments]);
 
   // Request browser notification permission
   const [alertFeedbackMsg, setAlertFeedbackMsg] = useState<string | null>(null);
@@ -742,6 +762,9 @@ export default function App() {
                       <LeadCard
                         key={lead.id}
                         lead={lead}
+                        currentUser={currentUser}
+                        pinnedComments={pinnedComments.filter((c) => c.lead_id === lead.id)}
+                        onCommentStatusUpdated={handleCommentStatusUpdated}
                         onLogCall={(l) => setActiveCallModalLead(l)}
                         onOpenDetail={(l) => setSelectedDetailLead(l)}
                         onTogglePriority={(l) => handleTogglePriority(l)}
@@ -756,6 +779,9 @@ export default function App() {
               {currentView === 'all-leads' && (
                 <AllLeadsView
                   leads={leads}
+                  currentUser={currentUser}
+                  pinnedComments={pinnedComments}
+                  onCommentStatusUpdated={handleCommentStatusUpdated}
                   onLogCall={(lead) => setActiveCallModalLead(lead)}
                   onOpenDetail={(lead) => setSelectedDetailLead(lead)}
                   onTogglePriority={(lead) => handleTogglePriority(lead)}
@@ -900,6 +926,10 @@ export default function App() {
           currentUser={currentUser}
           isOpen={isAdminModalOpen}
           onClose={() => setIsAdminModalOpen(false)}
+          onDataFlushed={() => {
+            fetchLeads();
+            fetchPinnedComments();
+          }}
           isModal={true}
         />
       )}

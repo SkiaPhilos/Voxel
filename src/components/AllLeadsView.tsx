@@ -11,7 +11,7 @@ import {
   RotateCcw,
   CheckCircle2,
 } from 'lucide-react';
-import type { Lead, Priority } from '../types';
+import type { Lead, Priority, PinnedComment, User } from '../types';
 import { LeadCard } from './LeadCard';
 
 interface AllLeadsViewProps {
@@ -20,6 +20,9 @@ interface AllLeadsViewProps {
   onOpenDetail: (lead: Lead) => void;
   onTogglePriority: (lead: Lead) => void;
   onOpenNewLeadModal: () => void;
+  currentUser?: User | null;
+  pinnedComments?: PinnedComment[];
+  onCommentStatusUpdated?: (commentId: string, newStatus: 'acknowledged' | 'done') => void;
 }
 
 export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
@@ -28,6 +31,9 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
   onOpenDetail,
   onTogglePriority,
   onOpenNewLeadModal,
+  currentUser,
+  pinnedComments,
+  onCommentStatusUpdated,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -364,6 +370,9 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
             <LeadCard
               key={lead.id}
               lead={lead}
+              currentUser={currentUser}
+              pinnedComments={pinnedComments?.filter((c) => c.lead_id === lead.id)}
+              onCommentStatusUpdated={onCommentStatusUpdated}
               onLogCall={onLogCall}
               onOpenDetail={onOpenDetail}
               onTogglePriority={onTogglePriority}

@@ -176,6 +176,18 @@ export const api = {
     });
   },
 
+  async flushUserData(userIds: string[]): Promise<{
+    success: boolean;
+    deletedLeadsCount: number;
+    deletedCallLogsCount: number;
+    deletedDirectivesCount: number;
+  }> {
+    return request('/api/admin/flush-user-data', {
+      method: 'POST',
+      body: JSON.stringify({ userIds }),
+    });
+  },
+
   // Leads
   async getLeads(
     view?: 'active' | 'closed' | 'archive' | 'all',

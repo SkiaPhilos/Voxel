@@ -920,18 +920,21 @@ export async function getLeads(params?: {
     // Apply role-based scoping
     if (params?.reviewingAgentId) {
       leads = leads.filter((l) => l.assigned_to === params.reviewingAgentId);
-    } else if (params?.userRole === 'manager' && params.userId) {
-      const teamUsers = await listUsers();
-      const teamIds = new Set(
-        teamUsers
-          .filter((u) => u.id === params.userId || u.managerId === params.userId)
-          .map((u) => u.id)
-      );
-      if (params.filter === 'team') {
-        leads = leads.filter((l) => l.assigned_to && teamIds.has(l.assigned_to));
+    } else if ((params?.userRole === 'admin' || params?.userRole === 'manager') && params.userId) {
+      if (params.filter === 'team' || params.filter === 'all') {
+        // Team filter explicitly requested
+        if (params.userRole === 'manager') {
+          const teamUsers = await listUsers();
+          const teamIds = new Set(
+            teamUsers
+              .filter((u) => u.id === params.userId || u.managerId === params.userId)
+              .map((u) => u.id)
+          );
+          leads = leads.filter((l) => l.assigned_to && teamIds.has(l.assigned_to));
+        }
       } else {
-        // By default show manager's own leads (and unassigned)
-        leads = leads.filter((l) => l.assigned_to === params.userId || (!l.assigned_to && teamIds.has(params.userId)));
+        // By default on main pipeline, managers and admins only see their own leads
+        leads = leads.filter((l) => l.assigned_to === params.userId);
       }
     } else if (params?.userRole === 'agent' && params.userId) {
       if (params.filter === 'reassigned') {
@@ -980,18 +983,19 @@ export async function getLeads(params?: {
   // Apply role-based scoping for local fallback
   if (params?.reviewingAgentId) {
     list = list.filter((l) => l.assigned_to === params.reviewingAgentId);
-  } else if (params?.userRole === 'manager' && params.userId) {
-    const teamUsers = await listUsers();
-    const teamIds = new Set(
-      teamUsers
-        .filter((u) => u.id === params.userId || u.managerId === params.userId)
-        .map((u) => u.id)
-    );
-    if (params.filter === 'team') {
-      list = list.filter((l) => l.assigned_to && teamIds.has(l.assigned_to));
+  } else if ((params?.userRole === 'admin' || params?.userRole === 'manager') && params.userId) {
+    if (params.filter === 'team' || params.filter === 'all') {
+      if (params.userRole === 'manager') {
+        const teamUsers = await listUsers();
+        const teamIds = new Set(
+          teamUsers
+            .filter((u) => u.id === params.userId || u.managerId === params.userId)
+            .map((u) => u.id)
+        );
+        list = list.filter((l) => l.assigned_to && teamIds.has(l.assigned_to));
+      }
     } else {
-      // By default show manager's own leads (and unassigned)
-      list = list.filter((l) => l.assigned_to === params.userId || (!l.assigned_to && teamIds.has(params.userId)));
+      list = list.filter((l) => l.assigned_to === params.userId);
     }
   } else if (params?.userRole === 'agent' && params.userId) {
     if (params.filter === 'reassigned') {
@@ -2143,10 +2147,25 @@ export async function listPinnedComments(params?: {
   if (supabaseClient) {
     try {
       let query = supabaseClient.from('pinned_comments').select('*').order('created_at', { ascending: false });
-      if (filterLeadId) query = query.eq('lead_id', filterLeadId);
-      if (filterCallLogId) query = query.eq('call_log_id', filterCallLogId);
-      if (filterAuthorId) query = query.eq('author_id', filterAuthorId);
-      if (filterAgentId) query = query.eq('agent_id', filterAgentId);
+      if (filterLeadId) {
+        query = query.eq('lead_id', filterLeadId);
+        if (filterCallLogId) query = query.eq('call_log_id', filterCallLogId);
+      } else {
+        if (filterCallLogId) query = query.eq('call_log_id', filterCallLogId);
+        if (filterAuthorId) query = query.eq('author_id', filterAuthorId);
+        if (filterAgentId) {
+          const { data: agentLeads } = await supabaseClient
+            .from('leads')
+            .select('id')
+            .eq('assigned_to', filterAgentId);
+          const agentLeadIds = (agentLeads || []).map((l: any) => l.id);
+          if (agentLeadIds.length > 0) {
+            query = query.or(`agent_id.eq.${filterAgentId},lead_id.in.(${agentLeadIds.join(',')})`);
+          } else {
+            query = query.eq('agent_id', filterAgentId);
+          }
+        }
+      }
 
       const { data, error } = await query;
       if (!error && data) {
@@ -2176,10 +2195,19 @@ export async function listPinnedComments(params?: {
   }
 
   let list = [...(localStore.pinnedComments || [])];
-  if (filterLeadId) list = list.filter((c) => c.lead_id === filterLeadId);
-  if (filterCallLogId) list = list.filter((c) => c.call_log_id === filterCallLogId);
-  if (filterAuthorId) list = list.filter((c) => c.author_id === filterAuthorId);
-  if (filterAgentId) list = list.filter((c) => c.agent_id === filterAgentId);
+  if (filterLeadId) {
+    list = list.filter((c) => c.lead_id === filterLeadId);
+    if (filterCallLogId) list = list.filter((c) => c.call_log_id === filterCallLogId);
+  } else {
+    if (filterCallLogId) list = list.filter((c) => c.call_log_id === filterCallLogId);
+    if (filterAuthorId) list = list.filter((c) => c.author_id === filterAuthorId);
+    if (filterAgentId) {
+      const agentLeadIds = new Set(
+        localStore.leads.filter((l) => l.assigned_to === filterAgentId).map((l) => l.id)
+      );
+      list = list.filter((c) => c.agent_id === filterAgentId || (c.lead_id && agentLeadIds.has(c.lead_id)));
+    }
+  }
 
   // Hydrate lead and agent names if missing
   for (const c of list) {
@@ -2497,4 +2525,79 @@ export async function createNewsletterLog(params: {
   localStore.newsletterLogs.unshift(log);
   saveLocalStore(localStore);
   return log;
+}
+
+export async function flushUserData(userIds: string[]): Promise<{
+  success: boolean;
+  deletedLeadsCount: number;
+  deletedCallLogsCount: number;
+  deletedDirectivesCount: number;
+}> {
+  if (!userIds || userIds.length === 0) {
+    return { success: true, deletedLeadsCount: 0, deletedCallLogsCount: 0, deletedDirectivesCount: 0 };
+  }
+
+  let deletedLeadsCount = 0;
+  let deletedCallLogsCount = 0;
+  let deletedDirectivesCount = 0;
+
+  if (supabaseClient) {
+    try {
+      const { data: leadsToDelete } = await supabaseClient
+        .from('leads')
+        .select('id')
+        .or(`assigned_to.in.(${userIds.join(',')}),original_owner_id.in.(${userIds.join(',')})`);
+
+      const leadIds = (leadsToDelete || []).map((l: any) => l.id);
+
+      let pinQuery = supabaseClient.from('pinned_comments').delete();
+      if (leadIds.length > 0) {
+        pinQuery = pinQuery.or(`lead_id.in.(${leadIds.join(',')}),agent_id.in.(${userIds.join(',')})`);
+      } else {
+        pinQuery = pinQuery.in('agent_id', userIds);
+      }
+      const pinRes = await pinQuery.select('id');
+      deletedDirectivesCount = pinRes.data?.length || 0;
+
+      let logQuery = supabaseClient.from('call_logs').delete();
+      if (leadIds.length > 0) {
+        logQuery = logQuery.or(`lead_id.in.(${leadIds.join(',')}),logged_by.in.(${userIds.join(',')})`);
+      } else {
+        logQuery = logQuery.in('logged_by', userIds);
+      }
+      const logRes = await logQuery.select('id');
+      deletedCallLogsCount = logRes.data?.length || 0;
+
+      if (leadIds.length > 0) {
+        const leadRes = await supabaseClient.from('leads').delete().in('id', leadIds).select('id');
+        deletedLeadsCount = leadRes.data?.length || 0;
+      }
+    } catch (err) {
+      console.error('Error in flushUserData:', err);
+    }
+  }
+
+  const userSet = new Set(userIds);
+  const leadsToRemove = localStore.leads.filter(
+    (l) => userSet.has(l.assigned_to || '') || userSet.has(l.original_owner_id || '')
+  );
+  const leadIdSet = new Set(leadsToRemove.map((l) => l.id));
+
+  deletedLeadsCount = Math.max(deletedLeadsCount, leadsToRemove.length);
+
+  localStore.leads = localStore.leads.filter((l) => !leadIdSet.has(l.id));
+  localStore.call_logs = (localStore.call_logs || []).filter(
+    (c) => !leadIdSet.has(c.lead_id) && !userSet.has(c.logged_by || '')
+  );
+  localStore.pinnedComments = (localStore.pinnedComments || []).filter(
+    (p) => !leadIdSet.has(p.lead_id) && !userSet.has(p.agent_id || '')
+  );
+  saveLocalStore(localStore);
+
+  return {
+    success: true,
+    deletedLeadsCount,
+    deletedCallLogsCount,
+    deletedDirectivesCount,
+  };
 }

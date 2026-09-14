@@ -30,6 +30,7 @@ interface AdminSettingsModalProps {
   isModal?: boolean;
   isOpen?: boolean;
   onClose?: () => void;
+  onDataFlushed?: () => void;
 }
 
 export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
@@ -37,6 +38,7 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
   isModal = false,
   isOpen = false,
   onClose,
+  onDataFlushed,
 }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -80,6 +82,45 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
   const [isUpdatingPush, setIsUpdatingPush] = useState(false);
   const [pushStatusMsg, setPushStatusMsg] = useState<string | null>(null);
   const [isSendingTestPush, setIsSendingTestPush] = useState(false);
+
+  // Flush Data state
+  const [selectedUserIdsForFlush, setSelectedUserIdsForFlush] = useState<string[]>([]);
+  const [isFlushConfirmOpen, setIsFlushConfirmOpen] = useState(false);
+  const [isFlushing, setIsFlushing] = useState(false);
+  const [flushMessage, setFlushMessage] = useState<string | null>(null);
+
+  const handleToggleSelectUser = (userId: string) => {
+    setSelectedUserIdsForFlush((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const handleToggleSelectAll = () => {
+    if (selectedUserIdsForFlush.length === users.length) {
+      setSelectedUserIdsForFlush([]);
+    } else {
+      setSelectedUserIdsForFlush(users.map((u) => u.id));
+    }
+  };
+
+  const handleFlushData = async () => {
+    if (selectedUserIdsForFlush.length === 0) return;
+    setIsFlushing(true);
+    try {
+      const res = await api.flushUserData(selectedUserIdsForFlush);
+      setFlushMessage(`Successfully flushed data: ${res.deletedLeadsCount} lead(s) permanently removed.`);
+      setSelectedUserIdsForFlush([]);
+      setIsFlushConfirmOpen(false);
+      fetchDbStatus();
+      fetchUsers();
+      onDataFlushed?.();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to flush user data');
+      setIsFlushConfirmOpen(false);
+    } finally {
+      setIsFlushing(false);
+    }
+  };
 
   const fetchUsers = async () => {
     setIsLoadingUsers(true);
@@ -564,17 +605,42 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
 
       {/* Authorized Users Table & Management */}
       <div className="p-6 rounded-2xl bg-white border border-stone-200 shadow-2xs">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-stone-600" />
             <h3 className="text-sm font-bold text-stone-900 uppercase tracking-wider">
               Authorized Team Members ({users.length})
             </h3>
           </div>
-          <span className="text-[11px] text-stone-400">
-            Admins can adjust roles, assign reporting managers, and reset credentials
-          </span>
+          <div className="flex items-center gap-2">
+            {selectedUserIdsForFlush.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsFlushConfirmOpen(true)}
+                className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Flush Data ({selectedUserIdsForFlush.length})</span>
+              </button>
+            )}
+          </div>
         </div>
+
+        {flushMessage && (
+          <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{flushMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFlushMessage(null)}
+              className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {isLoadingUsers ? (
           <div className="p-6 text-center text-xs text-stone-400">Loading user accounts...</div>
@@ -583,6 +649,15 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="text-stone-400 border-b border-stone-200">
+                  <th className="py-2.5 pl-2 pr-1 w-8">
+                    <input
+                      type="checkbox"
+                      checked={users.length > 0 && selectedUserIdsForFlush.length === users.length}
+                      onChange={handleToggleSelectAll}
+                      className="rounded border-stone-300 text-amber-700 focus:ring-amber-700 cursor-pointer"
+                      title="Select all"
+                    />
+                  </th>
                   <th className="py-2.5 font-semibold">User</th>
                   <th className="py-2.5 font-semibold">Role</th>
                   <th className="py-2.5 font-semibold">Reporting Manager</th>
@@ -597,6 +672,14 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
                   return (
                     <React.Fragment key={u.id}>
                       <tr className="hover:bg-stone-50/60">
+                        <td className="py-3 pl-2 pr-1">
+                          <input
+                            type="checkbox"
+                            checked={selectedUserIdsForFlush.includes(u.id)}
+                            onChange={() => handleToggleSelectUser(u.id)}
+                            className="rounded border-stone-300 text-amber-700 focus:ring-amber-700 cursor-pointer"
+                          />
+                        </td>
                         <td className="py-3 pr-3">
                           <div className="font-semibold text-stone-900">{u.name}</div>
                           <div className="text-[11px] text-stone-500 font-mono">{u.email}</div>
@@ -680,7 +763,7 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
                       {/* Inline password reset row */}
                       {resettingUserId === u.id && (
                         <tr className="bg-amber-50/50">
-                          <td colSpan={6} className="p-3">
+                          <td colSpan={7} className="p-3">
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-amber-200 shadow-2xs">
                               <div className="flex items-center gap-2">
                                 <Lock className="w-4 h-4 text-amber-700 shrink-0" />
@@ -840,6 +923,56 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Confirmation Dialog for Flush Data */}
+      {isFlushConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-stone-900">Permanently Flush User Data?</h3>
+                <p className="text-xs text-stone-500">This action cannot be undone.</p>
+              </div>
+            </div>
+            <p className="text-xs text-stone-600 mb-4 leading-relaxed">
+              Are you sure you want to permanently delete all leads, set follow-up timers, call logs, and directives
+              for the selected {selectedUserIdsForFlush.length} user(s)?
+            </p>
+            <div className="max-h-36 overflow-y-auto mb-5 p-3 rounded-xl bg-stone-50 border border-stone-200 space-y-1.5">
+              {users
+                .filter((u) => selectedUserIdsForFlush.includes(u.id))
+                .map((u) => (
+                  <div key={u.id} className="text-xs text-stone-800 flex items-center justify-between">
+                    <span className="font-semibold">{u.name}</span>
+                    <span className="text-stone-400 font-mono text-[11px]">{u.email}</span>
+                  </div>
+                ))}
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isFlushing}
+                onClick={() => setIsFlushConfirmOpen(false)}
+                className="px-4 py-2 rounded-xl border border-stone-300 text-stone-700 text-xs font-semibold hover:bg-stone-50 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isFlushing}
+                onClick={handleFlushData}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isFlushing ? 'Flushing data...' : 'Yes, Permanently Flush'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

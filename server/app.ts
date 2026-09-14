@@ -40,6 +40,7 @@ import {
   updatePinnedCommentStatus,
   listNewsletterLogs,
   createNewsletterLog,
+  flushUserData,
 } from './db.js';
 import {
   hashPassword,
@@ -685,6 +686,26 @@ app.patch('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
+app.post('/api/admin/flush-user-data', requireAuth, requireAdmin, async (req, res) => {
+  const { userIds } = req.body;
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    return res.status(400).json({ error: 'User IDs array is required' });
+  }
+
+  try {
+    const result = await flushUserData(userIds);
+    res.json({
+      success: true,
+      deletedLeadsCount: result.deletedLeadsCount,
+      deletedCallLogsCount: result.deletedCallLogsCount,
+      deletedDirectivesCount: result.deletedDirectivesCount,
+    });
+  } catch (err: any) {
+    console.error('flushUserData error:', err);
+    res.status(500).json({ error: 'Failed to flush user data' });
+  }
+});
+
 // ==========================================
 // LEADS API
 // ==========================================
@@ -1192,7 +1213,9 @@ app.get('/api/pinned-comments', requireAuth, async (req, res) => {
     let filterAuthorId: string | undefined = undefined;
 
     if (currentUser.role === 'agent') {
-      filterAgentId = currentUser.id;
+      if (!leadId) {
+        filterAgentId = currentUser.id;
+      }
     } else if (currentUser.role === 'manager') {
       if (!filterAgentId && !leadId) {
         filterAuthorId = currentUser.id;
