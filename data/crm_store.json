@@ -1,0 +1,100 @@
+{
+  "users": [],
+  "leads": [],
+  "call_logs": [
+    {
+      "id": "call_mu1aupq91rtq",
+      "lead_id": "lead_mu1aup7ey8vf",
+      "timestamp": "2026-09-14T13:49:35.553Z",
+      "summary": "Spoke with operations director, asked to follow up next Tuesday",
+      "full_notes": "Budget is approved for Q3. Needs technical specifications.",
+      "outcome_tag": "Call Back Later",
+      "business_info": "Contact: John Smith, VP Operations",
+      "logged_by": "usr_mu1at18lf78h",
+      "logged_by_name": "Agent Alpha"
+    },
+    {
+      "id": "call_mu1at2iuxz1p",
+      "lead_id": "lead_mu1at203n92t",
+      "timestamp": "2026-09-14T13:48:18.822Z",
+      "summary": "Spoke with operations director, asked to follow up next Tuesday",
+      "full_notes": "Budget is approved for Q3. Needs technical specifications.",
+      "outcome_tag": "Call Back Later",
+      "business_info": "Contact: John Smith, VP Operations",
+      "logged_by": "usr_mu1at18lf78h",
+      "logged_by_name": "Agent Alpha"
+    }
+  ],
+  "sentNotifications": [],
+  "pushSubscriptions": [],
+  "passwordResetOtps": [
+    {
+      "id": "otp_mty5yo66bbs4",
+      "email": "abdullahsaeed.sam@gmail.com",
+      "otp": "393729",
+      "expiresAt": "2026-09-12T09:24:23.550Z",
+      "used": false,
+      "createdAt": "2026-09-12T09:09:23.550Z"
+    }
+  ],
+  "potentialCustomers": [],
+  "pinnedComments": [
+    {
+      "id": "pin_mu1aurj5tv9a",
+      "target_type": "call_log",
+      "lead_id": "lead_mu1aup7ey8vf",
+      "lead_name": "Apex Manufacturing Co",
+      "lead_phone": "+15553292239",
+      "call_log_id": "call_mu1aupq91rtq",
+      "author_id": "usr_mu1at0zrhcxd",
+      "author_name": "Sarah Connor (Manager)",
+      "agent_id": "usr_mu1at18lf78h",
+      "agent_name": "Agent Alpha",
+      "content": "Verify if John Smith is the sole sign-off on Q3 budget.",
+      "status": "unacknowledged",
+      "created_at": "2026-09-14T13:49:37.889Z"
+    },
+    {
+      "id": "pin_mu1atgll2gfy",
+      "target_type": "lead",
+      "lead_id": "test_lead",
+      "author_id": "test_author",
+      "author_name": "Test Manager",
+      "content": "Hello directive",
+      "status": "unacknowledged",
+      "created_at": "2026-09-14T13:48:37.065Z"
+    },
+    {
+      "id": "pin_mu1at4ge4d51",
+      "target_type": "call_log",
+      "lead_id": "lead_mu1at203n92t",
+      "lead_name": "Apex Manufacturing Co",
+      "lead_phone": "+15558161854",
+      "call_log_id": "call_mu1at2iuxz1p",
+      "author_id": "usr_mu1at0zrhcxd",
+      "author_name": "Sarah Connor (Manager)",
+      "agent_id": "usr_mu1at18lf78h",
+      "agent_name": "Agent Alpha",
+      "content": "Verify if John Smith is the sole sign-off on Q3 budget.",
+      "status": "unacknowledged",
+      "created_at": "2026-09-14T13:48:21.326Z"
+    },
+    {
+      "id": "pin_mu1at3azgvm5",
+      "target_type": "lead",
+      "lead_id": "lead_mu1at203n92t",
+      "lead_name": "Apex Manufacturing Co",
+      "lead_phone": "+15558161854",
+      "author_id": "usr_mu1at0zrhcxd",
+      "author_name": "Sarah Connor (Manager)",
+      "agent_id": "usr_mu1at18lf78h",
+      "agent_name": "Agent Alpha",
+      "content": "Ensure you review the security compliance deck before the Tuesday call.",
+      "status": "done",
+      "created_at": "2026-09-14T13:48:19.835Z",
+      "acknowledged_at": "2026-09-14T13:48:24.078Z",
+      "done_at": "2026-09-14T13:48:25.404Z"
+    }
+  ],
+  "newsletterLogs": []
+}
