@@ -511,6 +511,7 @@ export default function App() {
             archivedLeadsCount={archivedLeads.length}
             potentialCustomersCount={potentialCustomersCount}
             dueNowCount={dueNowLeads.length}
+            pendingDirectivesCount={pinnedComments.filter((c) => c.status !== 'done').length}
             user={currentUser}
             onOpenProfile={() => setIsProfileModalOpen(true)}
             onOpenAdminSettings={() => setIsAdminModalOpen(true)}
@@ -550,6 +551,7 @@ export default function App() {
                       {currentView === 'archive' && 'Archived & Denied Leads'}
                       {currentView === 'potential-customers' && 'Potential Customers Directory'}
                       {currentView === 'manager' && 'Group Manager Oversight & Command'}
+                      {currentView === 'directives' && 'Assigned Directives & Tasks Ledger'}
                       {currentView === 'newsletter' && 'Newsletter & Email Dispatch'}
                     </h1>
                     {currentView === 'active' && dueNowLeads.length > 0 && (
@@ -566,6 +568,7 @@ export default function App() {
                     {currentView === 'archive' && `${archivedLeads.length} leads removed from active pipeline`}
                     {currentView === 'potential-customers' && `${potentialCustomersCount} prospect inquiries & product interests recorded`}
                     {currentView === 'manager' && 'Supervision, integrity metrics, lead reassignment & team directives'}
+                    {currentView === 'directives' && 'Track directives you wrote on leads and check agent completion status'}
                     {currentView === 'newsletter' && 'Email campaigns powered by Resend API integration'}
                   </p>
                 </div>
@@ -825,11 +828,12 @@ export default function App() {
                 />
               )}
 
-              {/* VIEW 6: GROUP MANAGER DASHBOARD */}
-              {currentView === 'manager' && (currentUser.role === 'manager' || currentUser.role === 'admin') && (
+              {/* VIEW 6: GROUP MANAGER DASHBOARD & ASSIGNED DIRECTIVES */}
+              {(currentView === 'manager' || currentView === 'directives') && (currentUser.role === 'manager' || currentUser.role === 'admin') && (
                 <ManagerDashboardView
                   currentUser={currentUser}
                   leads={leads}
+                  initialTab={currentView === 'directives' ? 'directives' : 'team'}
                   onLeadUpdated={(updatedLead) => {
                     setLeads((prev) => prev.map((l) => (l.id === updatedLead.id ? updatedLead : l)));
                     if (selectedDetailLead?.id === updatedLead.id) {
@@ -837,6 +841,7 @@ export default function App() {
                     }
                   }}
                   onSelectLead={(lead) => setSelectedDetailLead(lead)}
+                  onOpenLeadDetail={(lead) => setSelectedDetailLead(lead)}
                   onLogCall={(lead) => setActiveCallModalLead(lead)}
                   onTogglePriority={handleTogglePriority}
                 />

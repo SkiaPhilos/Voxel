@@ -348,7 +348,7 @@ export const StickyDirectiveFloatingLayer: React.FC<StickyDirectiveFloatingLayer
       : window.innerHeight || document.documentElement.clientHeight;
 
     // Docking limits (screen coordinates)
-    const topDockY = viewportTop + 72; // just beneath the top navbar
+    const topDockY = viewportTop + 82; // comfortable breathing room below navbar
     const bottomDockY = viewportBottom - 84; // just above bottom nav/controls
 
     let topDockCount = 0;
@@ -365,9 +365,9 @@ export const StickyDirectiveFloatingLayer: React.FC<StickyDirectiveFloatingLayer
 
       // Width of floating note is roughly 160-200px
       const noteWidth = 160;
-      // Position anchored to top-right of the card
+      // Position anchored to top-right of the card, neatly aligned with the header row
       const naturalX = Math.max(16, rect.right - noteWidth - 16);
-      const naturalY = rect.top - 12;
+      const naturalY = rect.top + 10; // moved down from previous -12 so it rests properly within the card
 
       let dockState: 'attached' | 'docked-top' | 'docked-bottom' = 'attached';
       let x = naturalX;
@@ -376,7 +376,7 @@ export const StickyDirectiveFloatingLayer: React.FC<StickyDirectiveFloatingLayer
       // Check if lead is above the viewport
       if (rect.bottom < topDockY + 20) {
         dockState = 'docked-top';
-        y = topDockY + topDockCount * 36;
+        y = topDockY + topDockCount * 40;
         // Keep horizontally bounded within screen
         x = Math.min(Math.max(16, naturalX), window.innerWidth - noteWidth - 24);
         topDockCount++;
@@ -384,7 +384,7 @@ export const StickyDirectiveFloatingLayer: React.FC<StickyDirectiveFloatingLayer
       // Check if lead is below the viewport
       else if (rect.top > bottomDockY - 20) {
         dockState = 'docked-bottom';
-        y = bottomDockY - bottomDockCount * 36;
+        y = bottomDockY - bottomDockCount * 40;
         x = Math.min(Math.max(16, naturalX), window.innerWidth - noteWidth - 24);
         bottomDockCount++;
       } else {

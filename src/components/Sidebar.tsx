@@ -29,6 +29,7 @@ export type AppView =
   | 'archive'
   | 'potential-customers'
   | 'manager'
+  | 'directives'
   | 'newsletter';
 
 interface SidebarProps {
@@ -40,6 +41,7 @@ interface SidebarProps {
   archivedLeadsCount: number;
   potentialCustomersCount?: number;
   dueNowCount: number;
+  pendingDirectivesCount?: number;
   user: User;
   onOpenProfile: () => void;
   onOpenAdminSettings: () => void;
@@ -60,6 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   archivedLeadsCount,
   potentialCustomersCount,
   dueNowCount,
+  pendingDirectivesCount,
   user,
   onOpenProfile,
   onOpenAdminSettings,
@@ -143,6 +146,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             count: undefined,
             hasPulse: false,
             badgeColor: 'bg-amber-700 text-white',
+          },
+          {
+            id: 'directives' as const,
+            label: 'Directives Tasks',
+            icon: Pin,
+            count: pendingDirectivesCount,
+            hasPulse: (pendingDirectivesCount ?? 0) > 0,
+            badgeColor: (pendingDirectivesCount ?? 0) > 0 ? 'bg-amber-500 text-amber-950 font-bold' : 'bg-stone-200 text-stone-700',
           },
           {
             id: 'newsletter' as const,

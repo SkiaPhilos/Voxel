@@ -100,7 +100,7 @@ export const LeadCard: React.FC<LeadCardProps> = ({
       {/* Visual Anchor for attached physical sticky note */}
       <div
         id={`lead-sticky-anchor-${lead.id}`}
-        className="absolute -top-3.5 right-4 sm:right-6 pointer-events-none w-1 h-1"
+        className="absolute top-2.5 right-4 sm:right-6 pointer-events-none w-1 h-1"
       />
 
       {/* High Priority or Due Banner ribbon */}

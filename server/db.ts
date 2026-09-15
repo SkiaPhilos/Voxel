@@ -2378,6 +2378,9 @@ export async function updatePinnedCommentStatus(
       } else if (status === 'done') {
         payload.done_at = nowIso;
         payload.acknowledged_at = nowIso;
+      } else if (status === 'unacknowledged') {
+        payload.done_at = null;
+        payload.acknowledged_at = null;
       }
 
       const { data, error } = await supabaseClient
@@ -2400,11 +2403,15 @@ export async function updatePinnedCommentStatus(
           id: data.id,
           target_type: data.target_type || (data.call_log_id ? 'call_log' : 'lead'),
           lead_id: data.lead_id,
+          lead_name: data.lead_name || undefined,
+          lead_phone: data.lead_phone || undefined,
           call_log_id: data.call_log_id || undefined,
+          call_log_snippet: data.call_log_snippet || undefined,
           author_id: data.author_id,
           author_name: data.author_name,
           author_avatar_url: data.author_avatar_url || undefined,
           agent_id: data.agent_id || undefined,
+          agent_name: data.agent_name || undefined,
           content: data.content,
           status: data.status as PinnedCommentStatus,
           acknowledged_at: data.acknowledged_at || undefined,
@@ -2426,11 +2433,29 @@ export async function updatePinnedCommentStatus(
     } else if (status === 'done') {
       found.done_at = nowIso;
       found.acknowledged_at = found.acknowledged_at || nowIso;
+    } else if (status === 'unacknowledged') {
+      found.done_at = undefined;
+      found.acknowledged_at = undefined;
     }
     saveLocalStore(localStore);
     return found;
   }
   throw new Error('Pinned comment not found');
+}
+
+export async function deletePinnedComment(id: string): Promise<boolean> {
+  if (supabaseClient) {
+    try {
+      await supabaseClient.from('pinned_comments').delete().eq('id', id);
+    } catch {
+      // fallback
+    }
+  }
+  if (localStore.pinnedComments) {
+    localStore.pinnedComments = localStore.pinnedComments.filter((c) => c.id !== id);
+    saveLocalStore(localStore);
+  }
+  return true;
 }
 
 // -----------------------------------------------------------------------------

@@ -28,13 +28,16 @@ import { LeadCard } from './LeadCard';
 import { StickyDirectiveFloatingLayer } from './StickyDirectiveIndicator';
 import { ReassignLeadModal } from './ReassignLeadModal';
 import { PinDirectiveModal } from './PinDirectiveModal';
+import { AssignedDirectivesView } from './AssignedDirectivesView';
 import { formatFriendlyTime } from '../lib/dateUtils';
 
 interface ManagerDashboardViewProps {
   currentUser: User;
   leads: Lead[];
+  initialTab?: 'team' | 'directives';
   onLeadUpdated?: (lead: Lead) => void;
   onSelectLead?: (lead: Lead) => void;
+  onOpenLeadDetail?: (lead: Lead) => void;
   onLogCall?: (lead: Lead) => void;
   onTogglePriority?: (lead: Lead) => void;
 }
@@ -42,13 +45,27 @@ interface ManagerDashboardViewProps {
 export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
   currentUser,
   leads,
+  initialTab = 'team',
   onLeadUpdated,
   onSelectLead,
+  onOpenLeadDetail,
   onLogCall,
   onTogglePriority,
 }) => {
+  // Navigation tab: 'team' | 'directives'
+  const [activeTab, setActiveTab] = useState<'team' | 'directives'>(initialTab);
+
   // Mode: null = Team Overview, or User = Reviewing Agent Pipeline
   const [reviewingAgent, setReviewingAgent] = useState<User | null>(null);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+      if (initialTab === 'directives') {
+        setReviewingAgent(null);
+      }
+    }
+  }, [initialTab]);
 
   // Team Overview State
   const [stats, setStats] = useState<any>(null);
@@ -447,7 +464,7 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-stone-500">
-                    Supervise assigned agents, review individual agent pipelines, reassign leads, and pin directives.
+                    Supervise assigned agents, review individual agent pipelines, reassign leads, and monitor assigned directives.
                   </p>
                 </div>
               </div>
@@ -465,8 +482,63 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
             </div>
           </div>
 
-          {/* Summary KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* Sub-navigation Tabs: Team Oversight vs Assigned Directives Tasks */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('team')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'team'
+                    ? 'bg-amber-700 text-white shadow-2xs'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                <span>Team &amp; Agent Oversight</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('directives')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'directives'
+                    ? 'bg-amber-700 text-white shadow-2xs'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70'
+                }`}
+              >
+                <Pin className="w-4 h-4" />
+                <span>Assigned Directives Tasks</span>
+                {allPinnedComments.filter((c) => c.status !== 'done').length > 0 && (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      activeTab === 'directives'
+                        ? 'bg-amber-950 text-amber-200'
+                        : 'bg-amber-500 text-amber-950'
+                    }`}
+                  >
+                    {allPinnedComments.filter((c) => c.status !== 'done').length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'directives' ? (
+            <AssignedDirectivesView
+              currentUser={currentUser}
+              leads={leads}
+              onSelectLead={onSelectLead}
+              onOpenLeadDetail={onOpenLeadDetail || onSelectLead}
+              onReviewAgent={(agent) => {
+                setActiveTab('team');
+                setReviewingAgent(agent);
+              }}
+            />
+          ) : (
+            <>
+              {/* Summary KPI Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-4 bg-white rounded-2xl border border-stone-200 shadow-2xs">
               <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider">Total Leads</div>
               <div className="text-2xl font-black text-stone-900 mt-1">{summary.totalTeamLeads}</div>
@@ -767,17 +839,25 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
           </div>
 
           {/* SECTION 3: RECENT PINNED DIRECTIVES SUMMARY */}
-          <div className="p-5 bg-white rounded-2xl border border-stone-200 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+          <div className="p-5 bg-white rounded-2xl border border-stone-200 shadow-2xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-stone-100 pb-3 gap-2">
               <div className="flex items-center gap-2">
                 <Pin className="w-4 h-4 text-amber-700" />
                 <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
                   Active Team Directives ({allPinnedComments.length})
                 </h3>
               </div>
-              <span className="text-[11px] text-stone-400">
-                Directives pinned to leads or call logs across your supervised agents
-              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('directives');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="text-xs font-bold text-amber-800 hover:text-amber-950 flex items-center gap-1 cursor-pointer self-start sm:self-auto"
+              >
+                <span>Open Directives Task Ledger</span>
+                <span>&rarr;</span>
+              </button>
             </div>
 
             {allPinnedComments.length === 0 ? (
@@ -828,6 +908,8 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
               </div>
             )}
           </div>
+            </>
+          )}
         </div>
       )}
 

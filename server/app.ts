@@ -38,6 +38,7 @@ import {
   listPinnedComments,
   createPinnedComment,
   updatePinnedCommentStatus,
+  deletePinnedComment,
   listNewsletterLogs,
   createNewsletterLog,
   flushUserData,
@@ -1297,7 +1298,7 @@ app.delete('/api/potential-customers/:id', requireAuth, async (req, res) => {
 // ==========================================
 
 app.get('/api/pinned-comments', requireAuth, async (req, res) => {
-  const { leadId, targetUserId, agentId, status } = req.query;
+  const { leadId, targetUserId, agentId, status, authorId } = req.query;
   const currentUser = (req as any).user as User;
 
   try {
@@ -1309,8 +1310,18 @@ app.get('/api/pinned-comments', requireAuth, async (req, res) => {
         filterAgentId = currentUser.id;
       }
     } else if (currentUser.role === 'manager') {
-      if (!filterAgentId && !leadId) {
+      if (authorId === 'all') {
+        filterAuthorId = undefined;
+      } else if (authorId === 'me' || (!authorId && !filterAgentId && !leadId)) {
         filterAuthorId = currentUser.id;
+      } else if (authorId) {
+        filterAuthorId = authorId as string;
+      }
+    } else if (currentUser.role === 'admin') {
+      if (authorId === 'me') {
+        filterAuthorId = currentUser.id;
+      } else if (authorId && authorId !== 'all') {
+        filterAuthorId = authorId as string;
       }
     }
 
@@ -1331,7 +1342,7 @@ app.get('/api/pinned-comments', requireAuth, async (req, res) => {
 });
 
 app.post('/api/pinned-comments', requireAuth, requireManagerOrAdmin, async (req, res) => {
-  const { leadId, callLogId, targetUserId, agentId, comment, content } = req.body;
+  const { leadId, callLogId, targetUserId, agentId, comment, content, leadName, leadPhone, callLogSnippet, agentName } = req.body;
   const message = (comment || content || '').trim();
   if (!message) {
     return res.status(400).json({ error: 'Comment message is required' });
@@ -1340,10 +1351,26 @@ app.post('/api/pinned-comments', requireAuth, requireManagerOrAdmin, async (req,
   const currentUser = (req as any).user as User;
   let targetAgentId = targetUserId || agentId;
 
-  if (!targetAgentId && leadId) {
+  let finalLeadName = leadName;
+  let finalLeadPhone = leadPhone;
+  let finalCallSnippet = callLogSnippet;
+  let finalAgentName = agentName;
+
+  if (leadId) {
     const targetLead = await getLeadById(leadId);
-    if (targetLead?.assigned_to) {
-      targetAgentId = targetLead.assigned_to;
+    if (targetLead) {
+      finalLeadName = finalLeadName || targetLead.name;
+      finalLeadPhone = finalLeadPhone || targetLead.phone;
+      finalAgentName = finalAgentName || targetLead.assigned_to_name;
+      if (!targetAgentId && targetLead.assigned_to) {
+        targetAgentId = targetLead.assigned_to;
+      }
+      if (callLogId && !finalCallSnippet) {
+        const cl = targetLead.call_logs?.find((c) => c.id === callLogId);
+        if (cl) {
+          finalCallSnippet = cl.summary || cl.outcome_tag;
+        }
+      }
     }
   }
 
@@ -1354,8 +1381,12 @@ app.post('/api/pinned-comments', requireAuth, requireManagerOrAdmin, async (req,
   try {
     const pinned = await createPinnedComment({
       lead_id: leadId || undefined,
+      lead_name: finalLeadName,
+      lead_phone: finalLeadPhone,
       call_log_id: callLogId || undefined,
+      call_log_snippet: finalCallSnippet,
       agent_id: targetAgentId,
+      agent_name: finalAgentName,
       author_id: currentUser.id,
       author_name: currentUser.name,
       author_avatar_url: currentUser.avatarUrl || undefined,
@@ -1381,6 +1412,16 @@ app.patch('/api/pinned-comments/:id/status', requireAuth, async (req, res) => {
   } catch (err: any) {
     console.error('updatePinnedCommentStatus error:', err);
     res.status(500).json({ error: 'Failed to update pinned comment' });
+  }
+});
+
+app.delete('/api/pinned-comments/:id', requireAuth, requireManagerOrAdmin, async (req, res) => {
+  try {
+    await deletePinnedComment(req.params.id);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('deletePinnedComment error:', err);
+    res.status(500).json({ error: 'Failed to delete pinned comment' });
   }
 });
 

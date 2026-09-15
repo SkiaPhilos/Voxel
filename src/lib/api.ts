@@ -406,11 +406,13 @@ export const api = {
     leadId?: string;
     agentId?: string;
     status?: string;
+    authorId?: string;
   }): Promise<{ comments: PinnedComment[] }> {
     const qs = new URLSearchParams();
     if (params?.leadId) qs.set('leadId', params.leadId);
     if (params?.agentId) qs.set('agentId', params.agentId);
     if (params?.status) qs.set('status', params.status);
+    if (params?.authorId) qs.set('authorId', params.authorId);
     const query = qs.toString();
     return request(`/api/pinned-comments${query ? `?${query}` : ''}`);
   },
@@ -420,6 +422,10 @@ export const api = {
     callLogId?: string;
     agentId?: string;
     comment: string;
+    leadName?: string;
+    leadPhone?: string;
+    callLogSnippet?: string;
+    agentName?: string;
   }): Promise<{ comment: PinnedComment }> {
     return request('/api/pinned-comments', {
       method: 'POST',
@@ -434,6 +440,12 @@ export const api = {
     return request(`/api/pinned-comments/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
+    });
+  },
+
+  async deletePinnedComment(id: string): Promise<{ success: boolean }> {
+    return request(`/api/pinned-comments/${id}`, {
+      method: 'DELETE',
     });
   },
 
