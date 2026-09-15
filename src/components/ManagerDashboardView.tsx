@@ -528,6 +528,7 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
             <AssignedDirectivesView
               currentUser={currentUser}
               leads={leads}
+              teamMembers={teamMembers}
               onSelectLead={onSelectLead}
               onOpenLeadDetail={onOpenLeadDetail || onSelectLead}
               onReviewAgent={(agent) => {

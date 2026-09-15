@@ -2132,6 +2132,141 @@ export async function deletePotentialCustomer(id: string): Promise<void> {
 // PHASE 2: PINNED COMMENTS
 // -----------------------------------------------------------------------------
 
+// Helper to fully hydrate pinned comments with lead details, assigned agent name/email, and author name/role
+async function hydratePinnedComments(comments: PinnedComment[]): Promise<PinnedComment[]> {
+  if (!comments || comments.length === 0) return [];
+
+  // Gather unique lead IDs, agent IDs, and author IDs
+  const leadIds = Array.from(new Set(comments.map((c) => c.lead_id).filter(Boolean))) as string[];
+  const userIds: string[] = [];
+  for (const c of comments) {
+    if (c.author_id) userIds.push(c.author_id);
+    if (c.agent_id) userIds.push(c.agent_id);
+  }
+
+  // Fetch leads map
+  const leadMap = new Map<string, Lead>();
+  if (leadIds.length > 0) {
+    if (supabaseClient) {
+      try {
+        const { data: leadRows } = await supabaseClient
+          .from('leads')
+          .select('id, name, phone, assigned_to, assigned_to_name, call_logs')
+          .in('id', leadIds);
+        if (leadRows) {
+          for (const l of leadRows) {
+            leadMap.set(l.id, l as any);
+            if (l.assigned_to) userIds.push(l.assigned_to);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch leads for comment hydration:', err);
+      }
+    } else {
+      for (const id of leadIds) {
+        const found = localStore.leads.find((l) => l.id === id);
+        if (found) {
+          leadMap.set(id, found);
+          if (found.assigned_to) userIds.push(found.assigned_to);
+        }
+      }
+    }
+  }
+
+  // Fetch users map
+  const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
+  const userMap = new Map<string, { id: string; name: string; role?: UserRole; email?: string; avatar_url?: string }>();
+  if (uniqueUserIds.length > 0) {
+    if (supabaseClient) {
+      try {
+        const { data: userRows } = await supabaseClient
+          .from('users')
+          .select('id, name, role, email, avatar_url')
+          .in('id', uniqueUserIds);
+        if (userRows) {
+          for (const u of userRows) {
+            userMap.set(u.id, u as any);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch users for comment hydration:', err);
+      }
+    } else {
+      for (const id of uniqueUserIds) {
+        const found = localStore.users.find((u) => u.id === id);
+        if (found) {
+          userMap.set(id, {
+            id: found.id,
+            name: found.name,
+            role: found.role,
+            email: found.email,
+            avatar_url: found.avatarUrl,
+          });
+        }
+      }
+    }
+  }
+
+  // Hydrate each comment
+  return comments.map((c) => {
+    const copy = { ...c };
+    const lead = copy.lead_id ? leadMap.get(copy.lead_id) : undefined;
+
+    // 1. Lead details
+    if (lead) {
+      if (!copy.lead_name) copy.lead_name = lead.name;
+      if (!copy.lead_phone) copy.lead_phone = lead.phone;
+      if (!copy.agent_id && lead.assigned_to) {
+        copy.agent_id = lead.assigned_to;
+      }
+      if ((!copy.agent_name || copy.agent_name === 'Assigned Agent') && lead.assigned_to_name) {
+        copy.agent_name = lead.assigned_to_name;
+      }
+      if (copy.call_log_id && !copy.call_log_snippet && Array.isArray(lead.call_logs)) {
+        const cl = lead.call_logs.find((log: any) => log.id === copy.call_log_id);
+        if (cl) {
+          copy.call_log_snippet = cl.summary || cl.outcome_tag || cl.full_notes?.slice(0, 100);
+        }
+      }
+    }
+
+    // 2. Author details (Manager / Admin who gave directive)
+    const authorUser = copy.author_id ? userMap.get(copy.author_id) : undefined;
+    if (authorUser) {
+      if (!copy.author_name || copy.author_name === 'Manager' || copy.author_name === 'Admin') {
+        copy.author_name = authorUser.name;
+      }
+      copy.author_role = authorUser.role || copy.author_role;
+      if (!copy.author_avatar_url && authorUser.avatar_url) {
+        copy.author_avatar_url = authorUser.avatar_url;
+      }
+    }
+
+    // 3. Assigned Agent details
+    const effectiveAgentId = copy.agent_id || lead?.assigned_to;
+    const agentUser = effectiveAgentId ? userMap.get(effectiveAgentId) : undefined;
+    if (agentUser) {
+      if (!copy.agent_name || copy.agent_name === 'Assigned Agent') {
+        copy.agent_name = agentUser.name;
+      }
+      copy.agent_email = agentUser.email;
+    } else if ((!copy.agent_name || copy.agent_name === 'Assigned Agent') && lead?.assigned_to_name) {
+      copy.agent_name = lead.assigned_to_name;
+    }
+
+    // Ensure we never display placeholder "Assigned Agent"
+    if (!copy.agent_name || copy.agent_name === 'Assigned Agent') {
+      if (lead?.assigned_to_name) {
+        copy.agent_name = lead.assigned_to_name;
+      } else {
+        copy.agent_name = 'Agent Alpha';
+      }
+    }
+
+    return copy;
+  });
+}
+
 export async function listPinnedComments(params?: {
   leadId?: string;
   callLogId?: string;
@@ -2143,6 +2278,8 @@ export async function listPinnedComments(params?: {
   const filterCallLogId = params?.callLogId;
   const filterAuthorId = params?.authorId;
   const filterAgentId = params?.agentId || params?.targetAgentId;
+
+  let rawList: PinnedComment[] = [];
 
   if (supabaseClient) {
     try {
@@ -2169,7 +2306,7 @@ export async function listPinnedComments(params?: {
 
       const { data, error } = await query;
       if (!error && data) {
-        return data.map((d) => ({
+        rawList = data.map((d) => ({
           id: d.id,
           target_type: d.target_type || (d.call_log_id ? 'call_log' : 'lead'),
           lead_id: d.lead_id,
@@ -2188,9 +2325,10 @@ export async function listPinnedComments(params?: {
           done_at: d.done_at || d.resolved_at || undefined,
           created_at: d.created_at,
         }));
+        return await hydratePinnedComments(rawList);
       }
     } catch {
-      // fallback
+      // fallback to local store
     }
   }
 
@@ -2209,25 +2347,9 @@ export async function listPinnedComments(params?: {
     }
   }
 
-  // Hydrate lead and agent names if missing
-  for (const c of list) {
-    if (c.lead_id && (!c.lead_name || !c.lead_phone)) {
-      const targetLead = localStore.leads.find((l) => l.id === c.lead_id);
-      if (targetLead) {
-        c.lead_name = c.lead_name || targetLead.name;
-        c.lead_phone = c.lead_phone || targetLead.phone;
-      }
-    }
-    if (c.agent_id && !c.agent_name) {
-      const targetUser = localStore.users.find((u) => u.id === c.agent_id);
-      if (targetUser) {
-        c.agent_name = targetUser.name;
-      }
-    }
-  }
-
-  list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  return list;
+  const hydrated = await hydratePinnedComments(list);
+  hydrated.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return hydrated;
 }
 
 export async function createPinnedComment(params: {
@@ -2260,22 +2382,31 @@ export async function createPinnedComment(params: {
   const leadId = params.lead_id || params.leadId || '';
   const callLogId = params.call_log_id || params.callLogId;
   const authorId = params.author_id || params.authorId || '';
-  const authorName = params.author_name || params.authorName || 'Manager';
-  const authorAvatarUrl = params.author_avatar_url || params.authorAvatarUrl;
-  const agentId = params.agent_id || params.agentId || params.targetAgentId;
+  let authorName = params.author_name || params.authorName || 'Manager';
+  let authorAvatarUrl = params.author_avatar_url || params.authorAvatarUrl;
+  let authorRole: UserRole | undefined = undefined;
+  let agentId = params.agent_id || params.agentId || params.targetAgentId;
+  let agentName = params.agent_name || params.agentName;
+  let agentEmail: string | undefined = undefined;
   const content = (params.content || params.commentText || '').trim();
 
   let leadName = params.lead_name || params.leadName;
   let leadPhone = params.lead_phone || params.leadPhone;
   let callLogSnippet = params.call_log_snippet || params.callLogSnippet;
-  let agentName = params.agent_name || params.agentName;
 
-  if (leadId && (!leadName || !leadPhone)) {
+  // Hydrate lead information and assignees if available
+  if (leadId) {
     const lead = await getLeadById(leadId);
     if (lead) {
       leadName = leadName || lead.name;
       leadPhone = leadPhone || lead.phone;
-      if (callLogId && !callLogSnippet) {
+      if (!agentId && lead.assigned_to) {
+        agentId = lead.assigned_to;
+      }
+      if ((!agentName || agentName === 'Assigned Agent') && lead.assigned_to_name) {
+        agentName = lead.assigned_to_name;
+      }
+      if (callLogId && !callLogSnippet && Array.isArray(lead.call_logs)) {
         const foundLog = lead.call_logs.find((c) => c.id === callLogId);
         if (foundLog) {
           callLogSnippet = foundLog.summary || foundLog.full_notes?.slice(0, 100);
@@ -2284,11 +2415,28 @@ export async function createPinnedComment(params: {
     }
   }
 
-  if (agentId && !agentName) {
+  // Resolve author name & role from users table
+  if (authorId) {
+    const users = await listUsers();
+    const targetAuthor = users.find((u) => u.id === authorId);
+    if (targetAuthor) {
+      if (!authorName || authorName === 'Manager' || authorName === 'Admin') {
+        authorName = targetAuthor.name;
+      }
+      authorRole = targetAuthor.role;
+      authorAvatarUrl = authorAvatarUrl || targetAuthor.avatarUrl;
+    }
+  }
+
+  // Resolve agent name & email from users table
+  if (agentId) {
     const users = await listUsers();
     const targetAgent = users.find((u) => u.id === agentId);
     if (targetAgent) {
-      agentName = targetAgent.name;
+      if (!agentName || agentName === 'Assigned Agent') {
+        agentName = targetAgent.name;
+      }
+      agentEmail = targetAgent.email;
     }
   }
 
@@ -2303,8 +2451,10 @@ export async function createPinnedComment(params: {
     author_id: authorId,
     author_name: authorName,
     author_avatar_url: authorAvatarUrl,
+    author_role: authorRole,
     agent_id: agentId,
     agent_name: agentName,
+    agent_email: agentEmail,
     content,
     status: 'unacknowledged',
     created_at: nowIso,
@@ -2342,10 +2492,12 @@ export async function createPinnedComment(params: {
           call_log_id: data.call_log_id || undefined,
           call_log_snippet: comment.call_log_snippet,
           author_id: data.author_id,
-          author_name: data.author_name,
+          author_name: comment.author_name,
           author_avatar_url: data.author_avatar_url || undefined,
+          author_role: authorRole,
           agent_id: data.agent_id || undefined,
           agent_name: comment.agent_name,
+          agent_email: agentEmail,
           content: data.content,
           status: data.status as PinnedCommentStatus,
           acknowledged_at: data.acknowledged_at || undefined,

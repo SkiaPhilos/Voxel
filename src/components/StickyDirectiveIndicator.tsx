@@ -367,7 +367,7 @@ export const StickyDirectiveFloatingLayer: React.FC<StickyDirectiveFloatingLayer
       const noteWidth = 160;
       // Position anchored to top-right of the card, neatly aligned with the header row
       const naturalX = Math.max(16, rect.right - noteWidth - 16);
-      const naturalY = rect.top + 10; // moved down from previous -12 so it rests properly within the card
+      const naturalY = rect.top + 22; // moved down so it comfortably sits aligned within the card header row
 
       let dockState: 'attached' | 'docked-top' | 'docked-bottom' = 'attached';
       let x = naturalX;

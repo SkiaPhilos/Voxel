@@ -5,7 +5,6 @@ import {
   AlertCircle,
   Clock,
   Search,
-  Filter,
   Users,
   RefreshCw,
   Trash2,
@@ -16,6 +15,8 @@ import {
   Phone,
   MessageSquareQuote,
   Check,
+  ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 import type { Lead, PinnedComment, PinnedCommentStatus, User } from '../types';
 import { api } from '../lib/api';
@@ -24,6 +25,7 @@ import { UserAvatar } from './UserAvatar';
 interface AssignedDirectivesViewProps {
   currentUser: User;
   leads: Lead[];
+  teamMembers?: User[];
   onSelectLead?: (lead: Lead) => void;
   onOpenLeadDetail?: (lead: Lead) => void;
   onReviewAgent?: (agent: User) => void;
@@ -54,20 +56,57 @@ function formatFriendlyTime(isoString?: string): string {
 export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
   currentUser,
   leads,
+  teamMembers = [],
   onSelectLead,
   onOpenLeadDetail,
   onReviewAgent,
 }) => {
   const [comments, setComments] = useState<PinnedComment[]>([]);
+  const [userRoster, setUserRoster] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'unacknowledged' | 'acknowledged' | 'done'>('all');
   const [agentFilter, setAgentFilter] = useState<string>('all');
-  const [scopeFilter, setScopeFilter] = useState<'my' | 'all'>('my');
+  const [scopeFilter, setScopeFilter] = useState<'my' | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  // Load complete user roster (admin or manager team) to hydrate names reliably
+  useEffect(() => {
+    let isMounted = true;
+    const loadUsers = async () => {
+      try {
+        if (currentUser.role === 'admin') {
+          const res = await api.getUsers().catch(() => null);
+          if (res?.users && isMounted) {
+            setUserRoster(res.users);
+            return;
+          }
+        }
+        const teamRes = await api.getManagerTeam().catch(() => null);
+        if (teamRes?.teamMembers && isMounted) {
+          setUserRoster(teamRes.teamMembers);
+        }
+      } catch (err) {
+        console.warn('Failed to load user roster:', err);
+      }
+    };
+    loadUsers();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser]);
+
+  // Unified Map of Users for robust ID -> User lookup
+  const userMap = useMemo(() => {
+    const map = new Map<string, User>();
+    map.set(currentUser.id, currentUser);
+    teamMembers.forEach((u) => map.set(u.id, u));
+    userRoster.forEach((u) => map.set(u.id, u));
+    return map;
+  }, [currentUser, teamMembers, userRoster]);
 
   // Map of leads by id for fast lookup
   const leadMap = useMemo(() => {
@@ -81,8 +120,6 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
     else setIsRefreshing(true);
 
     try {
-      // If scopeFilter is 'my', filter by current user's authored directives
-      // If scopeFilter is 'all' (for admin or manager viewing team), authorId is 'all'
       const params: any = {};
       if (currentUser.role === 'admin' || currentUser.role === 'manager') {
         params.authorId = scopeFilter === 'my' ? currentUser.id : 'all';
@@ -144,41 +181,101 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
     }
   };
 
+  // Helper to resolve the assigned agent's display name accurately
+  const getResolvedAgentName = useCallback((comment: PinnedComment): string => {
+    const lead = comment.lead_id ? leadMap.get(comment.lead_id) : undefined;
+    const effectiveAgentId = comment.agent_id || lead?.assigned_to;
+    const agentUser = effectiveAgentId ? userMap.get(effectiveAgentId) : undefined;
+
+    if (comment.agent_name && comment.agent_name !== 'Assigned Agent') {
+      return comment.agent_name;
+    }
+    if (lead?.assigned_to_name) {
+      return lead.assigned_to_name;
+    }
+    if (agentUser?.name) {
+      return agentUser.name;
+    }
+    if (lead?.assigned_to) {
+      const matched = userMap.get(lead.assigned_to);
+      if (matched?.name) return matched.name;
+    }
+    return 'Agent Alpha';
+  }, [leadMap, userMap]);
+
+  // Helper to resolve the author (manager/admin) display name and role
+  const getResolvedAuthor = useCallback((comment: PinnedComment): {
+    name: string;
+    role: 'admin' | 'manager' | 'agent';
+    isCurrentUser: boolean;
+    avatarUrl?: string;
+    email?: string;
+  } => {
+    const isCurrentUser = comment.author_id === currentUser.id;
+    const authorUser = comment.author_id ? userMap.get(comment.author_id) : undefined;
+
+    let name = comment.author_name;
+    if (!name || name === 'Manager' || name === 'Admin') {
+      name = authorUser?.name || (isCurrentUser ? currentUser.name : 'Manager');
+    }
+
+    const role = (comment.author_role || authorUser?.role || (isCurrentUser ? currentUser.role : 'manager')) as 'admin' | 'manager' | 'agent';
+    const avatarUrl = comment.author_avatar_url || authorUser?.avatarUrl || (isCurrentUser ? currentUser.avatarUrl : undefined);
+    const email = authorUser?.email || (isCurrentUser ? currentUser.email : undefined);
+
+    return { name, role, isCurrentUser, avatarUrl, email };
+  }, [currentUser, userMap]);
+
   // Distinct agent names for filter dropdown
   const uniqueAgents = useMemo(() => {
     const set = new Set<string>();
     comments.forEach((c) => {
-      if (c.agent_name) set.add(c.agent_name);
+      const name = getResolvedAgentName(c);
+      if (name) set.add(name);
     });
     return Array.from(set).sort();
-  }, [comments]);
+  }, [comments, getResolvedAgentName]);
 
   // Filtered comments
   const filteredComments = useMemo(() => {
     return comments.filter((c) => {
+      const lead = c.lead_id ? leadMap.get(c.lead_id) : undefined;
+      const agentName = getResolvedAgentName(c);
+      const author = getResolvedAuthor(c);
+
       // Status filter
       if (statusFilter !== 'all' && c.status !== statusFilter) {
         return false;
       }
       // Agent filter
-      if (agentFilter !== 'all' && c.agent_name !== agentFilter) {
+      if (agentFilter !== 'all' && agentName !== agentFilter) {
         return false;
       }
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchLeadName = c.lead_name?.toLowerCase().includes(q);
-        const matchLeadPhone = c.lead_phone?.toLowerCase().includes(q);
-        const matchAgentName = c.agent_name?.toLowerCase().includes(q);
+        const matchLeadName = (c.lead_name || lead?.name || '').toLowerCase().includes(q);
+        const matchLeadPhone = (c.lead_phone || lead?.phone || '').toLowerCase().includes(q);
+        const matchAgentName = agentName.toLowerCase().includes(q);
+        const matchAuthorName = author.name.toLowerCase().includes(q);
+        const matchAuthorRole = author.role.toLowerCase().includes(q);
         const matchContent = c.content.toLowerCase().includes(q);
-        const matchCallSnippet = c.call_log_snippet?.toLowerCase().includes(q);
-        if (!matchLeadName && !matchLeadPhone && !matchAgentName && !matchContent && !matchCallSnippet) {
+        const matchCallSnippet = (c.call_log_snippet || '').toLowerCase().includes(q);
+        if (
+          !matchLeadName &&
+          !matchLeadPhone &&
+          !matchAgentName &&
+          !matchAuthorName &&
+          !matchAuthorRole &&
+          !matchContent &&
+          !matchCallSnippet
+        ) {
           return false;
         }
       }
       return true;
     });
-  }, [comments, statusFilter, agentFilter, searchQuery]);
+  }, [comments, statusFilter, agentFilter, searchQuery, leadMap, getResolvedAgentName, getResolvedAuthor]);
 
   // Metrics
   const totalCount = comments.length;
@@ -214,7 +311,7 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                   </span>
                 </h1>
                 <p className="text-xs text-stone-500">
-                  Track instructions you wrote on specific leads and monitor whether assigned agents have executed them.
+                  Track instructions written by Managers and Admins on leads, and monitor whether assigned agents have executed them.
                 </p>
               </div>
             </div>
@@ -222,8 +319,19 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
 
           {/* Top Controls: Scope Toggle + Refresh */}
           <div className="flex items-center gap-2 self-start md:self-auto">
-            {currentUser.role === 'admin' && (
+            {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
               <div className="flex items-center bg-[#FAF8F5] p-1 rounded-xl border border-stone-200 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setScopeFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    scopeFilter === 'all'
+                      ? 'bg-white text-stone-900 shadow-2xs font-bold'
+                      : 'text-stone-500 hover:text-stone-800'
+                  }`}
+                >
+                  All Directives
+                </button>
                 <button
                   type="button"
                   onClick={() => setScopeFilter('my')}
@@ -234,17 +342,6 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                   }`}
                 >
                   My Directives
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScopeFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    scopeFilter === 'all'
-                      ? 'bg-white text-stone-900 shadow-2xs font-bold'
-                      : 'text-stone-500 hover:text-stone-800'
-                  }`}
-                >
-                  All Managers
                 </button>
               </div>
             )}
@@ -389,8 +486,8 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search lead, directive, agent..."
-                className="w-full sm:w-60 pl-8 pr-3 py-1.5 bg-[#FAF8F5] border border-stone-200 rounded-xl text-xs text-stone-900 placeholder-stone-400 focus:outline-none focus:border-amber-700 focus:bg-white transition-all"
+                placeholder="Search lead, directive, agent, or manager..."
+                className="w-full sm:w-64 pl-8 pr-3 py-1.5 bg-[#FAF8F5] border border-stone-200 rounded-xl text-xs text-stone-900 placeholder-stone-400 focus:outline-none focus:border-amber-700 focus:bg-white transition-all"
               />
             </div>
           </div>
@@ -413,7 +510,7 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
             <p className="text-xs text-stone-500 max-w-sm mx-auto mt-1">
               {searchQuery || statusFilter !== 'all' || agentFilter !== 'all'
                 ? 'Try clearing your filters or search query to view other directives.'
-                : "You haven't assigned any directives yet. You can pin directives to leads while reviewing agent pipelines."}
+                : "No directives currently in this view. You can pin directives to leads while reviewing agent pipelines."}
             </p>
           </div>
           {(searchQuery || statusFilter !== 'all' || agentFilter !== 'all') && (
@@ -435,9 +532,11 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
           {filteredComments.map((comment) => {
             const isDone = comment.status === 'done';
             const isAck = comment.status === 'acknowledged';
-            const isPending = comment.status === 'unacknowledged';
             const matchedLead = comment.lead_id ? leadMap.get(comment.lead_id) : undefined;
-            const isAuthor = comment.author_id === currentUser.id;
+            const author = getResolvedAuthor(comment);
+            const resolvedAgentName = getResolvedAgentName(comment);
+            const effectiveAgentId = comment.agent_id || matchedLead?.assigned_to;
+            const agentUser = effectiveAgentId ? userMap.get(effectiveAgentId) : undefined;
 
             return (
               <div
@@ -518,15 +617,113 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
 
                 {/* Card Body */}
                 <div className="p-4 sm:p-5 space-y-4 flex-1">
-                  {/* Lead Target Context ("on x lead") */}
+                  {/* STAKEHOLDERS: WHO ISSUED DIRECTIVE (Manager/Admin) & WHO IS ASSIGNED (Agent) */}
+                  <div className="p-3 rounded-xl bg-stone-50/90 border border-stone-200 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Left: Issued By (Manager / Admin) */}
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <UserAvatar
+                          user={{
+                            id: comment.author_id || 'author',
+                            name: author.name,
+                            email: author.email || '',
+                            role: author.role,
+                            avatarUrl: author.avatarUrl,
+                            created_at: '',
+                          }}
+                          size="sm"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[10px] text-stone-400 font-bold uppercase tracking-wider flex items-center gap-1.5 flex-wrap">
+                            <span>Directive Given By</span>
+                            <span
+                              className={`text-[9px] font-bold px-1.5 py-0.2 rounded-sm uppercase tracking-wider ${
+                                author.role === 'admin'
+                                  ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                                  : 'bg-amber-100 text-amber-900 border border-amber-200'
+                              }`}
+                            >
+                              {author.role === 'admin' ? 'Admin' : 'Manager'}
+                            </span>
+                          </div>
+                          <div className="font-bold text-stone-900 text-xs truncate flex items-center gap-1 mt-0.5">
+                            <span className="truncate">{author.name}</span>
+                            {author.isCurrentUser && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-amber-200 text-amber-900 shrink-0">
+                                You
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-stone-400 font-mono">
+                            {comment.created_at
+                              ? new Date(comment.created_at).toLocaleDateString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Assigned Agent (Lead Owner) */}
+                      <div className="flex items-start justify-between gap-2 min-w-0 pt-2 sm:pt-0 border-t sm:border-t-0 sm:border-l border-stone-200 sm:pl-3">
+                        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                          <UserAvatar
+                            user={
+                              agentUser || {
+                                id: effectiveAgentId || 'agent',
+                                name: resolvedAgentName,
+                                email: comment.agent_email || '',
+                                role: 'agent',
+                                created_at: '',
+                              }
+                            }
+                            size="sm"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[10px] text-stone-400 font-bold uppercase tracking-wider flex items-center gap-1.5 flex-wrap">
+                              <span>Assigned Agent</span>
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-sm bg-sky-100 text-sky-900 border border-sky-200">
+                                Lead Owner
+                              </span>
+                            </div>
+                            <div className="font-bold text-stone-900 text-xs truncate mt-0.5">
+                              {resolvedAgentName}
+                            </div>
+                            <div className="text-[10px] text-stone-500 truncate">
+                              {comment.agent_email || agentUser?.email || 'Sales Agent'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {agentUser && onReviewAgent && (
+                          <button
+                            type="button"
+                            onClick={() => onReviewAgent(agentUser)}
+                            className="px-2 py-1 bg-white hover:bg-stone-100 text-stone-700 hover:text-amber-800 rounded-lg border border-stone-200 text-[10px] font-bold transition-colors shrink-0 cursor-pointer flex items-center gap-1 shadow-2xs"
+                            title={`Review ${resolvedAgentName}'s pipeline`}
+                          >
+                            <span>Pipeline</span>
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Target Lead Context Box */}
                   <div className="flex items-start justify-between gap-3 p-3 rounded-xl bg-[#FAF8F5] border border-stone-200/90">
                     <div className="space-y-0.5 min-w-0">
-                      <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Target Lead</div>
-                      <div className="font-bold text-stone-900 text-sm truncate flex items-center gap-2">
+                      <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+                        Target Lead
+                      </div>
+                      <div className="font-bold text-stone-900 text-xs sm:text-sm truncate flex items-center gap-2">
                         <span>{comment.lead_name || matchedLead?.name || 'Unspecified Lead'}</span>
-                        {comment.lead_phone && (
+                        {(comment.lead_phone || matchedLead?.phone) && (
                           <span className="text-xs text-stone-500 font-mono font-normal">
-                            {comment.lead_phone}
+                            {comment.lead_phone || matchedLead?.phone}
                           </span>
                         )}
                       </div>
@@ -538,7 +735,7 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                         </div>
                       )}
                       {comment.call_log_snippet && (
-                        <div className="text-[11px] text-stone-600 italic bg-white px-2 py-1 rounded border border-stone-200 mt-1.5 flex items-center gap-1.5">
+                        <div className="text-[11px] text-stone-600 italic bg-white px-2.5 py-1.5 rounded-lg border border-stone-200 mt-1.5 flex items-center gap-1.5">
                           <MessageSquareQuote className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                           <span className="truncate">Call note: &ldquo;{comment.call_log_snippet}&rdquo;</span>
                         </div>
@@ -561,44 +758,57 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                     )}
                   </div>
 
-                  {/* The Directive Message You Wrote */}
-                  <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200/90 space-y-1.5 shadow-2xs relative">
+                  {/* The Directive Note Box (Yellow Sticky / Amber Note) */}
+                  <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 space-y-1.5 shadow-2xs relative">
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-amber-900 flex items-center gap-1">
-                        <Pin className="w-3 h-3 fill-amber-700 text-amber-700" />
-                        <span>
-                          {isAuthor ? 'You wrote:' : `${comment.author_name || 'Manager'} wrote:`}
-                        </span>
-                      </span>
-                      <span className="text-stone-400 font-mono">
-                        {comment.created_at ? new Date(comment.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                      <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                        <Pin className="w-3.5 h-3.5 fill-amber-700 text-amber-700" />
+                        <span>Directive / Task Instruction:</span>
                       </span>
                     </div>
-                    <p className={`text-xs text-stone-900 font-medium leading-relaxed ${isDone ? 'line-through text-stone-500' : ''}`}>
+                    <p className={`text-xs text-stone-900 font-medium leading-relaxed whitespace-pre-wrap ${isDone ? 'line-through text-stone-500' : ''}`}>
                       {comment.content}
                     </p>
                   </div>
+                </div>
 
-                  {/* Assigned Agent Details */}
-                  <div className="flex items-center justify-between pt-1 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-full bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-xs shrink-0">
-                        {comment.agent_name ? comment.agent_name.charAt(0).toUpperCase() : 'A'}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-[10px] text-stone-400 font-bold uppercase tracking-wider">Assigned Agent</div>
-                        <div className="font-bold text-stone-900 truncate">
-                          {comment.agent_name || 'Assigned Agent'}
-                        </div>
-                      </div>
-                    </div>
+                {/* Bottom Footer: Lead Dial & Actions */}
+                <div className="px-4 py-2.5 bg-[#FAF8F5] border-t border-stone-100 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {matchedLead?.phone ? (
+                      <a
+                        href={`tel:${matchedLead.phone}`}
+                        className="text-stone-600 hover:text-amber-800 font-semibold flex items-center gap-1.5 transition-colors"
+                      >
+                        <Phone className="w-3 h-3 text-stone-400" />
+                        <span className="truncate">Call {matchedLead.phone}</span>
+                      </a>
+                    ) : (
+                      <span className="text-stone-400 text-[11px]">No phone number</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {matchedLead && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onOpenLeadDetail) onOpenLeadDetail(matchedLead);
+                          else if (onSelectLead) onSelectLead(matchedLead);
+                        }}
+                        className="font-bold text-amber-800 hover:text-amber-950 flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Open Lead</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
 
                     {/* Delete Directive Action */}
                     <button
                       type="button"
                       onClick={() => handleDelete(comment)}
                       disabled={deletingId === comment.id}
-                      className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer ml-1"
                       title="Delete directive"
                     >
                       {deletingId === comment.id ? (
@@ -609,31 +819,6 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                     </button>
                   </div>
                 </div>
-
-                {/* Bottom Footer Action: Direct Phone Call or Jump to Pipeline */}
-                {matchedLead && (
-                  <div className="px-4 py-2.5 bg-[#FAF8F5] border-t border-stone-100 flex items-center justify-between text-xs">
-                    <a
-                      href={`tel:${matchedLead.phone}`}
-                      className="text-stone-600 hover:text-amber-800 font-semibold flex items-center gap-1.5 transition-colors"
-                    >
-                      <Phone className="w-3 h-3 text-stone-400" />
-                      <span>Call {matchedLead.phone}</span>
-                    </a>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (onOpenLeadDetail) onOpenLeadDetail(matchedLead);
-                        else if (onSelectLead) onSelectLead(matchedLead);
-                      }}
-                      className="font-bold text-amber-800 hover:text-amber-950 flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>Open Lead</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
               </div>
             );
           })}

@@ -94,8 +94,10 @@ export interface PinnedComment {
   author_id: string;
   author_name: string;
   author_avatar_url?: string | null;
+  author_role?: 'admin' | 'manager' | 'agent';
   agent_id?: string | null; // agent receiving the pinned comment
   agent_name?: string | null;
+  agent_email?: string | null;
   content: string;
   status: PinnedCommentStatus;
   acknowledged_at?: string | null;

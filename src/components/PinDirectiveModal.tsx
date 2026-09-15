@@ -38,8 +38,12 @@ export const PinDirectiveModal: React.FC<PinDirectiveModalProps> = ({
     try {
       const res = await api.createPinnedComment({
         leadId: lead.id,
+        leadName: lead.name,
+        leadPhone: lead.phone,
         callLogId: callLogId || undefined,
+        callLogSnippet: callLogSnippet || undefined,
         agentId: lead.assigned_to || undefined,
+        agentName: lead.assigned_to_name || undefined,
         comment: commentText.trim(),
       });
       onCommentCreated(res.comment);
