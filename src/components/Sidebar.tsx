@@ -17,6 +17,7 @@ import {
   ShoppingBag,
   ShieldAlert,
   Mail,
+  X,
 } from 'lucide-react';
 import type { User } from '../types';
 import { UserAvatar } from './UserAvatar';
@@ -160,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {isMobileOpen && (
         <div
           onClick={() => setIsMobileOpen(false)}
-          className="fixed inset-0 z-40 bg-stone-900/50 backdrop-blur-xs lg:hidden transition-opacity duration-200"
+          className="fixed inset-0 z-50 bg-stone-900/50 backdrop-blur-xs lg:hidden transition-opacity duration-200"
         />
       )}
 
@@ -168,7 +169,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside
         onMouseEnter={() => !isPinned && setIsHovered(true)}
         onMouseLeave={() => !isPinned && setIsHovered(false)}
-        className={`fixed top-0 bottom-0 left-0 z-40 bg-[#FAF8F5] border-r border-stone-200/90 flex flex-col justify-between transition-all duration-200 ease-out shadow-xs select-none
+        className={`fixed top-0 bottom-0 left-0 z-50 bg-[#FAF8F5] border-r border-stone-200/90 flex flex-col justify-between transition-all duration-200 ease-out shadow-xl select-none
           ${isExpanded ? 'w-64' : 'w-18'}
           ${isMobileOpen ? 'translate-x-0 !w-64' : '-translate-x-full lg:translate-x-0'}
         `}
@@ -203,7 +204,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
 
-            {/* Pin status icon indicator when expanded */}
+            {/* Mobile close button to return to nav buttons */}
+            <button
+              id="mobile-sidebar-close-btn"
+              onClick={() => setIsMobileOpen(false)}
+              title="Close menu"
+              className="p-1.5 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-200/60 transition-colors lg:hidden cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Pin status icon indicator when expanded (desktop only) */}
             {isExpanded && (
               <button
                 onClick={togglePin}
@@ -294,7 +305,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Bottom Section: User Info & Account Menu */}
-        <div className="p-2.5 border-t border-stone-200/80 bg-[#FAF8F5] relative" ref={userMenuRef}>
+        <div className="p-2.5 pb-6 lg:pb-2.5 border-t border-stone-200/80 bg-[#FAF8F5] relative" ref={userMenuRef}>
           {/* User Popover / Dropdown Menu */}
           {userMenuOpen && (
             <div

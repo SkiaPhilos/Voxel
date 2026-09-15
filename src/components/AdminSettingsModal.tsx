@@ -14,6 +14,8 @@ import {
   Database,
   RefreshCw,
   BellRing,
+  Download,
+  FileSpreadsheet,
 } from 'lucide-react';
 import type { User, UserRole } from '../types';
 import { api } from '../lib/api';
@@ -88,6 +90,23 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
   const [isFlushConfirmOpen, setIsFlushConfirmOpen] = useState(false);
   const [isFlushing, setIsFlushing] = useState(false);
   const [flushMessage, setFlushMessage] = useState<string | null>(null);
+
+  // Download All Data state
+  const [isDownloadingAllData, setIsDownloadingAllData] = useState(false);
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
+
+  const handleDownloadAllData = async () => {
+    setIsDownloadingAllData(true);
+    setDownloadMessage(null);
+    try {
+      await api.downloadAllDataCsv();
+      setDownloadMessage('All system data exported successfully! CSV download started.');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to download system data');
+    } finally {
+      setIsDownloadingAllData(false);
+    }
+  };
 
   const handleToggleSelectUser = (userId: string) => {
     setSelectedUserIdsForFlush((prev) =>
@@ -429,6 +448,29 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
                 Total Leads: <strong className="text-stone-800">{dbStatus.leadCount ?? 0}</strong>
               </span>
             </div>
+
+            {/* System Wide Data Export */}
+            <div className="mt-4 pt-4 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Download All Data</span>
+                </div>
+                <p className="text-[11px] text-stone-500">
+                  Export complete system dataset of all users (Admins, Managers, and Agents) into a comprehensive CSV.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="download-all-data-db-btn"
+                onClick={handleDownloadAllData}
+                disabled={isDownloadingAllData}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 active:bg-amber-900 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <Download className={`w-3.5 h-3.5 ${isDownloadingAllData ? 'animate-bounce' : ''}`} />
+                <span>{isDownloadingAllData ? 'Exporting CSV...' : 'Download All Data'}</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="text-xs text-stone-400 py-2">Loading system status...</div>
@@ -613,6 +655,18 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
             </h3>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              id="download-all-data-team-btn"
+              onClick={handleDownloadAllData}
+              disabled={isDownloadingAllData}
+              className="px-3 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Download all data of all users (Admins, Managers, Agents) as CSV"
+            >
+              <Download className={`w-3.5 h-3.5 ${isDownloadingAllData ? 'animate-bounce' : ''}`} />
+              <span>{isDownloadingAllData ? 'Exporting...' : 'Download All Data'}</span>
+            </button>
+
             {selectedUserIdsForFlush.length > 0 && (
               <button
                 type="button"
@@ -625,6 +679,22 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
             )}
           </div>
         </div>
+
+        {downloadMessage && (
+          <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{downloadMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDownloadMessage(null)}
+              className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {flushMessage && (
           <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between gap-2">

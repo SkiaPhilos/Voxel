@@ -323,6 +323,33 @@ export const api = {
     return `/api/leads/export/csv?type=${type}&token=${token || ''}`;
   },
 
+  getAllDataExportCsvUrl(): string {
+    const token = getStoredToken();
+    return `/api/admin/export/all-data/csv?token=${token || ''}`;
+  },
+
+  async downloadAllDataCsv(): Promise<void> {
+    const token = getStoredToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const res = await fetch('/api/admin/export/all-data/csv', { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to download data' }));
+      throw new Error(err.error || 'Failed to download system data');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `coldcall_crm_all_users_data_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  },
+
   // ----------------------------------------------------
   // Phase 2: Custom Profile Picture
   // ----------------------------------------------------

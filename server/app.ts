@@ -72,25 +72,40 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// Serverless URL normalizer: ensures /api routes match even if stripped by rewrites
-app.use((req, res, next) => {
-  if (req.url && !req.url.startsWith('/api')) {
-    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
-  }
-  next();
+// Serve service worker with explicit JS mime type and Service-Worker-Allowed header
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.resolve(process.cwd(), 'public', 'sw.js'));
 });
+
+// Serve web app manifest
+app.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.sendFile(path.resolve(process.cwd(), 'public', 'manifest.json'));
+});
+
+// Serve public static assets (icons, images, manifest)
+app.use(express.static(path.resolve(process.cwd(), 'public')));
 
 // ==========================================
 // AUTHENTICATION & ROLE MIDDLEWARE
 // ==========================================
 
 async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  let token: string | null = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (req.query?.token && typeof req.query.token === 'string') {
+    token = req.query.token;
+  }
+
+  if (!token) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  const token = authHeader.substring(7);
   const payload = verifySessionToken(token);
   if (!payload) {
     return res.status(401).json({ error: 'Invalid or expired session token' });
@@ -1146,6 +1161,83 @@ app.get('/api/potential-customers/export/csv', requireAuth, async (req, res) => 
   } catch (err: any) {
     console.error('potential customers export error:', err);
     res.status(500).json({ error: 'Failed to export potential customers CSV' });
+  }
+});
+
+// Admin Export All System Data (All Leads across all Agents, Managers, and Admins)
+app.get('/api/admin/export/all-data/csv', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    // Unrestricted getLeads across all users and roles
+    const allLeads = await getLeads({ filter: 'all' });
+    const allUsers = await listUsers();
+    const userMap = new Map(allUsers.map((u) => [u.id, u]));
+
+    const headers = [
+      'Lead ID',
+      'Name',
+      'Phone Number',
+      'Email',
+      'Status',
+      'Priority',
+      'Assigned User Name',
+      'Assigned User Email',
+      'Assigned User Role',
+      'Reporting Manager ID',
+      'Original Creator',
+      'Source',
+      'Created At (ISO)',
+      'Last Updated (ISO)',
+      'Next Follow-up Due (ISO)',
+      'Total Calls Logged',
+      'Business Info',
+      'All Notes & Full Call Logs',
+    ];
+
+    const rows = allLeads.map((lead) => {
+      const assignedUser = lead.assigned_to ? userMap.get(lead.assigned_to) : null;
+      const creatorUser = lead.original_owner_id ? userMap.get(lead.original_owner_id) : null;
+
+      const concatenatedNotes = [
+        lead.business_notes ? `[Base Notes]: ${lead.business_notes}` : '',
+        ...(lead.call_logs || []).map(
+          (c) =>
+            `[${formatIsoTimestamp(c.timestamp)} - ${c.outcome_tag} by ${c.logged_by_name || (c.logged_by ? userMap.get(c.logged_by)?.name : '') || 'Agent'}]: ${c.summary} | ${c.full_notes} ${
+              c.business_info ? `(Biz Info: ${c.business_info})` : ''
+            }`
+        ),
+      ]
+        .filter(Boolean)
+        .join('\n---\n');
+
+      return [
+        sanitizeAndEscapeCsv(lead.id),
+        sanitizeAndEscapeCsv(lead.name),
+        sanitizeAndEscapeCsv(lead.phone),
+        sanitizeAndEscapeCsv(lead.email || ''),
+        sanitizeAndEscapeCsv(lead.status),
+        sanitizeAndEscapeCsv(lead.priority),
+        sanitizeAndEscapeCsv(assignedUser ? assignedUser.name : (lead.assigned_to_name || 'Unassigned')),
+        sanitizeAndEscapeCsv(assignedUser ? assignedUser.email : ''),
+        sanitizeAndEscapeCsv(assignedUser ? assignedUser.role : ''),
+        sanitizeAndEscapeCsv(assignedUser?.managerId || ''),
+        sanitizeAndEscapeCsv(creatorUser ? `${creatorUser.name} (${creatorUser.role})` : (lead.original_owner_id || '')),
+        sanitizeAndEscapeCsv(lead.source || ''),
+        sanitizeAndEscapeCsv(formatIsoTimestamp(lead.created_at)),
+        sanitizeAndEscapeCsv(formatIsoTimestamp(lead.updated_at)),
+        sanitizeAndEscapeCsv(formatIsoTimestamp(lead.next_action_at)),
+        sanitizeAndEscapeCsv((lead.call_logs || []).length),
+        sanitizeAndEscapeCsv(lead.business_info || ''),
+        sanitizeAndEscapeCsv(concatenatedNotes),
+      ].join(',');
+    });
+
+    const csvContent = [headers.map(sanitizeAndEscapeCsv).join(','), ...rows].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="coldcall_crm_all_users_data_${Date.now()}.csv"`);
+    res.send(csvContent);
+  } catch (err: any) {
+    console.error('All users data export error:', err);
+    res.status(500).json({ error: 'Failed to export all system data' });
   }
 });
 

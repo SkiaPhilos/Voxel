@@ -32,31 +32,56 @@ export function isPushSupported(): boolean {
 }
 
 export async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> {
-  if (!('serviceWorker' in navigator)) {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
     throw new Error('Service Workers are not supported in this browser.');
   }
 
-  let reg = await navigator.serviceWorker.getRegistration();
-  if (!reg) {
+  let reg: ServiceWorkerRegistration;
+  try {
     reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  } catch (err) {
+    console.warn('Initial SW registration failed with absolute path, attempting relative path:', err);
+    reg = await navigator.serviceWorker.register('sw.js');
   }
 
-  // Wait for the worker to be active
-  if (reg.installing || reg.waiting) {
+  // Attempt to update the registration in background
+  try {
+    await reg.update();
+  } catch {
+    // Ignore update failures (e.g. offline)
+  }
+
+  // If worker is already active, return immediately
+  if (reg.active) {
+    return reg;
+  }
+
+  // If installing or waiting, wait for it to reach activated state
+  const worker = reg.installing || reg.waiting;
+  if (worker) {
     await new Promise<void>((resolve) => {
-      const targetWorker = reg!.installing || reg!.waiting;
-      if (!targetWorker) return resolve();
-      targetWorker.addEventListener('statechange', () => {
-        if (targetWorker.state === 'activated') {
+      const stateListener = () => {
+        if (worker.state === 'activated' || worker.state === 'redundant') {
+          worker.removeEventListener('statechange', stateListener);
           resolve();
         }
-      });
-      // Safety timeout after 2 seconds
-      setTimeout(resolve, 2000);
+      };
+      worker.addEventListener('statechange', stateListener);
+      // Timeout after 3 seconds so we don't stall
+      setTimeout(resolve, 3000);
     });
   }
 
-  return navigator.serviceWorker.ready;
+  // Wait for serviceWorker.ready with a race timeout
+  try {
+    const readyReg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<ServiceWorkerRegistration>((resolve) => setTimeout(() => resolve(reg), 2500)),
+    ]);
+    return readyReg || reg;
+  } catch {
+    return reg;
+  }
 }
 
 export async function getExistingSubscription(): Promise<PushSubscription | null> {
