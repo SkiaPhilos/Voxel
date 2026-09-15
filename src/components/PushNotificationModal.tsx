@@ -281,7 +281,7 @@ export const PushNotificationModal: React.FC<PushNotificationModalProps> = ({
                   <br />
                   2. Tap <strong>&quot;Add to Home Screen&quot;</strong>.
                   <br />
-                  3. Launch ColdCall CRM from your home screen and enable notifications.
+                  3. Launch Voxel from your home screen and enable notifications.
                 </p>
               </div>
             </div>

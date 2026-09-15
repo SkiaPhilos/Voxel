@@ -235,7 +235,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
               <PhoneCall className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-stone-900 font-sans tracking-tight">ColdCall CRM</h2>
+              <h2 className="text-xl font-bold text-stone-900 font-sans tracking-tight">Voxel</h2>
               <p className="text-xs text-stone-500">Internal Sales Calling &amp; Follow-up Hub</p>
             </div>
           </div>

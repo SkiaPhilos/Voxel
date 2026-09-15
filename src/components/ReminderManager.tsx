@@ -62,7 +62,7 @@ export const ReminderManager: React.FC<ReminderManagerProps> = ({
               Notification.permission === 'granted'
             ) {
               try {
-                new Notification(`ColdCall CRM: Follow-Up Due!`, {
+                new Notification(`Voxel: Follow-Up Due!`, {
                   body: `Time to call ${lead.name} (${lead.phone}). Click to open CRM.`,
                   icon: '/favicon.ico',
                   tag: lead.id,

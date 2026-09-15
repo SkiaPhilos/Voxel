@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Lead, Priority, PinnedComment, User } from '../types';
 import { LeadCard } from './LeadCard';
+import { StickyDirectiveFloatingLayer } from './StickyDirectiveIndicator';
 
 interface AllLeadsViewProps {
   leads: Lead[];
@@ -379,6 +380,15 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
             />
           ))}
         </div>
+      )}
+
+      {/* Smooth Sticky Note Attached & Docking Indicator Layer */}
+      {pinnedComments && pinnedComments.length > 0 && (
+        <StickyDirectiveFloatingLayer
+          pinnedComments={pinnedComments}
+          currentUser={currentUser}
+          onStatusUpdated={onCommentStatusUpdated}
+        />
       )}
     </div>
   );

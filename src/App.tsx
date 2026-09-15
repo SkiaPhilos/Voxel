@@ -36,6 +36,7 @@ import { PotentialCustomersView } from './components/PotentialCustomersView';
 import { ManagerDashboardView } from './components/ManagerDashboardView';
 import { NewsletterView } from './components/NewsletterView';
 import { ReassignLeadModal } from './components/ReassignLeadModal';
+import { StickyDirectiveFloatingLayer } from './components/StickyDirectiveIndicator';
 import { isDueNowOrOverdue, isStaleLead } from './lib/dateUtils';
 import { getExistingSubscription } from './lib/pushManager';
 
@@ -188,7 +189,7 @@ export default function App() {
       if (permission === 'granted') {
         setAlertFeedbackMsg('Desktop alerts enabled!');
         try {
-          new Notification('ColdCall CRM: Alerts Enabled', {
+          new Notification('Voxel: Alerts Enabled', {
             body: 'You will receive notifications here when a lead follow-up is due.',
             icon: '/favicon.ico',
           });
@@ -772,6 +773,13 @@ export default function App() {
                     ))}
                   </div>
                 )}
+
+                {/* Smooth Sticky Note Attached & Docking Indicator Layer */}
+                <StickyDirectiveFloatingLayer
+                  pinnedComments={pinnedComments}
+                  currentUser={currentUser}
+                  onStatusUpdated={handleCommentStatusUpdated}
+                />
               </div>
             )}
 

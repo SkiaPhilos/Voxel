@@ -25,7 +25,7 @@ import type { User, Lead, PinnedComment, PinnedCommentStatus, Priority } from '.
 import { api } from '../lib/api';
 import { UserAvatar } from './UserAvatar';
 import { LeadCard } from './LeadCard';
-import { PinnedScrollTracker } from './PinnedScrollTracker';
+import { StickyDirectiveFloatingLayer } from './StickyDirectiveIndicator';
 import { ReassignLeadModal } from './ReassignLeadModal';
 import { PinDirectiveModal } from './PinDirectiveModal';
 import { formatFriendlyTime } from '../lib/dateUtils';
@@ -372,7 +372,11 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
           </div>
 
           {/* Scroll-Tracking Dock Indicator for Pinned Directives */}
-          <PinnedScrollTracker pinnedComments={agentPinnedComments} />
+          <StickyDirectiveFloatingLayer
+            pinnedComments={agentPinnedComments}
+            currentUser={currentUser}
+            onStatusUpdated={handleCommentStatusUpdated}
+          />
 
           {/* Leads Cards Grid using the EXISTING LeadCard component */}
           {isLoadingAgentLeads ? (

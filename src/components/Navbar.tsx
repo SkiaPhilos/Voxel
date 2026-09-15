@@ -51,7 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-stone-900 text-lg tracking-tight font-sans">
-                    ColdCall CRM
+                    Voxel
                   </span>
                   <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-md bg-stone-200/70 text-stone-600">
                     Internal

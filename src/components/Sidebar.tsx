@@ -194,7 +194,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-stone-900 text-sm tracking-tight">
-                    ColdDial CRM
+                    Voxel
                   </span>
                   <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
                     Pro

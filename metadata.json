@@ -1,5 +1,5 @@
 {
-  "name": "ColdCall CRM",
+  "name": "Voxel",
   "description": "A focused sales CRM for cold-calling teams to manage leads, track call outcomes, and stay on top of scheduled follow-ups.",
   "requestFramePermissions": ["notifications"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

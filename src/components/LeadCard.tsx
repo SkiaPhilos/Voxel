@@ -97,6 +97,12 @@ export const LeadCard: React.FC<LeadCardProps> = ({
           : 'border-stone-200/90 hover:border-stone-300 shadow-2xs'
       }`}
     >
+      {/* Visual Anchor for attached physical sticky note */}
+      <div
+        id={`lead-sticky-anchor-${lead.id}`}
+        className="absolute -top-3.5 right-4 sm:right-6 pointer-events-none w-1 h-1"
+      />
+
       {/* High Priority or Due Banner ribbon */}
       {isOverdue && (
         <div className="bg-amber-500 text-amber-950 font-bold text-[10px] uppercase tracking-wider px-3 py-0.5 rounded-t-[11px] flex items-center justify-between">
@@ -281,7 +287,8 @@ export const LeadCard: React.FC<LeadCardProps> = ({
                   return (
                     <div
                       key={call.id || idx}
-                      className="p-2.5 rounded-lg bg-[#FAF8F5] border border-stone-200/80 text-xs space-y-1.5"
+                      id={`call-log-${call.id}`}
+                      className="relative p-2.5 rounded-lg bg-[#FAF8F5] border border-stone-200/80 text-xs space-y-1.5"
                     >
                       <div className="flex items-center justify-between flex-wrap gap-1.5">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -294,6 +301,7 @@ export const LeadCard: React.FC<LeadCardProps> = ({
                               currentUser={currentUser}
                               onStatusUpdated={onCommentStatusUpdated}
                               compact
+                              leadName={lead.name}
                             />
                           )}
                         </div>

@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "ColdCall CRM",
-  "short_name": "ColdCall",
+  "name": "Voxel",
+  "short_name": "Voxel",
   "description": "Focused sales CRM for cold-calling teams to dial leads, track outcomes, and manage follow-ups.",
   "start_url": "/",
   "scope": "/",
