@@ -10,6 +10,7 @@ import {
   PhoneCall,
   RotateCcw,
   CheckCircle2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import type { Lead, Priority, PinnedComment, User } from '../types';
 import { LeadCard } from './LeadCard';
@@ -21,9 +22,11 @@ interface AllLeadsViewProps {
   onOpenDetail: (lead: Lead) => void;
   onTogglePriority: (lead: Lead) => void;
   onOpenNewLeadModal: () => void;
+  onOpenCsvImportModal?: () => void;
   currentUser?: User | null;
   pinnedComments?: PinnedComment[];
   onCommentStatusUpdated?: (commentId: string, newStatus: 'acknowledged' | 'done') => void;
+  onRequestAssistance?: (lead: Lead) => void;
 }
 
 export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
@@ -32,9 +35,11 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
   onOpenDetail,
   onTogglePriority,
   onOpenNewLeadModal,
+  onOpenCsvImportModal,
   currentUser,
   pinnedComments,
   onCommentStatusUpdated,
+  onRequestAssistance,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -220,16 +225,30 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
             </div>
           </div>
 
-          <button
-            id="export-all-leads-csv-btn"
-            onClick={handleExportFilteredCsv}
-            disabled={filteredAndSortedLeads.length === 0}
-            title="Download CSV of all currently filtered leads"
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-900 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Export CSV ({filteredAndSortedLeads.length})</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenCsvImportModal && (
+              <button
+                id="import-all-leads-csv-btn"
+                onClick={onOpenCsvImportModal}
+                title="Bulk import leads from CSV spreadsheet"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-amber-700" />
+                <span>Import CSV</span>
+              </button>
+            )}
+
+            <button
+              id="export-all-leads-csv-btn"
+              onClick={handleExportFilteredCsv}
+              disabled={filteredAndSortedLeads.length === 0}
+              title="Download CSV of all currently filtered leads"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-900 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export CSV ({filteredAndSortedLeads.length})</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -377,6 +396,7 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
               onLogCall={onLogCall}
               onOpenDetail={onOpenDetail}
               onTogglePriority={onTogglePriority}
+              onRequestAssistance={onRequestAssistance}
             />
           ))}
         </div>

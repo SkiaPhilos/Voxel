@@ -20,6 +20,7 @@ import {
   Filter,
   Check,
   CheckCheck,
+  Trophy,
 } from 'lucide-react';
 import type { User, Lead, PinnedComment, PinnedCommentStatus, Priority } from '../types';
 import { api } from '../lib/api';
@@ -29,12 +30,13 @@ import { StickyDirectiveFloatingLayer } from './StickyDirectiveIndicator';
 import { ReassignLeadModal } from './ReassignLeadModal';
 import { PinDirectiveModal } from './PinDirectiveModal';
 import { AssignedDirectivesView } from './AssignedDirectivesView';
+import { TeamLeaderboardView } from './TeamLeaderboardView';
 import { formatFriendlyTime } from '../lib/dateUtils';
 
 interface ManagerDashboardViewProps {
   currentUser: User;
   leads: Lead[];
-  initialTab?: 'team' | 'directives';
+  initialTab?: 'team' | 'directives' | 'leaderboard';
   onLeadUpdated?: (lead: Lead) => void;
   onSelectLead?: (lead: Lead) => void;
   onOpenLeadDetail?: (lead: Lead) => void;
@@ -52,8 +54,8 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
   onLogCall,
   onTogglePriority,
 }) => {
-  // Navigation tab: 'team' | 'directives'
-  const [activeTab, setActiveTab] = useState<'team' | 'directives'>(initialTab);
+  // Navigation tab: 'team' | 'directives' | 'leaderboard'
+  const [activeTab, setActiveTab] = useState<'team' | 'directives' | 'leaderboard'>(initialTab);
 
   // Mode: null = Team Overview, or User = Reviewing Agent Pipeline
   const [reviewingAgent, setReviewingAgent] = useState<User | null>(null);
@@ -500,6 +502,19 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
 
               <button
                 type="button"
+                onClick={() => setActiveTab('leaderboard')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'leaderboard'
+                    ? 'bg-amber-700 text-white shadow-2xs'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70'
+                }`}
+              >
+                <Trophy className="w-4 h-4 text-amber-500" />
+                <span>Daily Leaderboard &amp; Feed</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setActiveTab('directives')}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   activeTab === 'directives'
@@ -524,7 +539,18 @@ export const ManagerDashboardView: React.FC<ManagerDashboardViewProps> = ({
             </div>
           </div>
 
-          {activeTab === 'directives' ? (
+          {activeTab === 'leaderboard' ? (
+            <TeamLeaderboardView
+              onSelectLead={(leadId) => {
+                const found = leads.find((l) => l.id === leadId);
+                if (found && onOpenLeadDetail) {
+                  onOpenLeadDetail(found);
+                } else if (found && onSelectLead) {
+                  onSelectLead(found);
+                }
+              }}
+            />
+          ) : activeTab === 'directives' ? (
             <AssignedDirectivesView
               currentUser={currentUser}
               leads={leads}

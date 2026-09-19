@@ -16,9 +16,15 @@ import {
   BellRing,
   Download,
   FileSpreadsheet,
+  ShieldAlert,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
 import type { User, UserRole } from '../types';
 import { api } from '../lib/api';
+import { ObjectionSettings } from './ObjectionSettings';
+import { CadenceSettings } from './CadenceSettings';
+import { AdminGeminiSettings } from './AdminGeminiSettings';
 import {
   isPushSupported,
   getExistingSubscription,
@@ -44,6 +50,7 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
 }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [adminActiveTab, setAdminActiveTab] = useState<'system' | 'gemini' | 'objections' | 'cadences'>('system');
 
   // Database Connection Status
   const [dbStatus, setDbStatus] = useState<{
@@ -374,6 +381,56 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setAdminActiveTab('system')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                adminActiveTab === 'system'
+                  ? 'bg-white text-stone-900 shadow-2xs'
+                  : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              System &amp; Users
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminActiveTab('gemini')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                adminActiveTab === 'gemini'
+                  ? 'bg-white text-stone-900 shadow-2xs'
+                  : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+              <span>Gemini AI Engine</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminActiveTab('cadences')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                adminActiveTab === 'cadences'
+                  ? 'bg-white text-stone-900 shadow-2xs'
+                  : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-700" />
+              <span>Outcome Cadences</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminActiveTab('objections')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                adminActiveTab === 'objections'
+                  ? 'bg-white text-stone-900 shadow-2xs'
+                  : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-700" />
+              <span>Objections &amp; Scripts</span>
+            </button>
+          </div>
+
           <span className="text-xs px-3 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-200 font-semibold flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5 text-amber-700" />
             <span>Admin: {currentUser.name}</span>
@@ -389,6 +446,14 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
         </div>
       </div>
 
+      {adminActiveTab === 'cadences' ? (
+        <CadenceSettings />
+      ) : adminActiveTab === 'objections' ? (
+        <ObjectionSettings />
+      ) : adminActiveTab === 'gemini' ? (
+        <AdminGeminiSettings />
+      ) : (
+        <>
       {actionMessage && (
         <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 animate-in fade-in">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1042,6 +1107,8 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

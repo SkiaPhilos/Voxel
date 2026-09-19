@@ -1,4 +1,4 @@
-import type { Lead } from '../types';
+import type { Lead, OutcomeCadenceRule } from '../types';
 
 export function isDueNowOrOverdue(nextActionAt: string | null | undefined): boolean {
   if (!nextActionAt) return false;
@@ -142,3 +142,32 @@ export function fromDatetimeLocal(localStr: string): string | null {
   const d = new Date(localStr);
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
+
+/**
+ * Computes an automated next action follow-up ISO timestamp based on an outcome cadence rule.
+ */
+export function computeCadenceFollowUpDate(rule: OutcomeCadenceRule): string | null {
+  if (rule.delayValue === 0) return null;
+
+  const now = new Date();
+  const target = new Date(now);
+
+  if (rule.delayUnit === 'hours') {
+    target.setTime(target.getTime() + rule.delayValue * 60 * 60 * 1000);
+  } else {
+    // delay in days
+    target.setDate(target.getDate() + rule.delayValue);
+  }
+
+  // If a preferred business hour was set (e.g. 10 AM)
+  if (typeof rule.preferredHour === 'number' && rule.preferredHour >= 0 && rule.preferredHour <= 23) {
+    target.setHours(rule.preferredHour, 0, 0, 0);
+    // If the resulting time has already elapsed today, bump by 24h
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+  }
+
+  return target.toISOString();
+}
+

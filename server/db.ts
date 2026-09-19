@@ -15,6 +15,12 @@ import type {
   PinnedComment,
   PinnedCommentStatus,
   NewsletterLog,
+  ObjectionBattleCard,
+  CallScript,
+  OutcomeCadenceConfig,
+  OutcomeCadenceRule,
+  AssistanceTicket,
+  AssistanceReason,
 } from '../src/types';
 import { hashPassword } from './auth.js';
 import {
@@ -414,6 +420,10 @@ interface LocalStoreData {
   potentialCustomers?: PotentialCustomer[];
   pinnedComments?: PinnedComment[];
   newsletterLogs?: NewsletterLog[];
+  objection_cards?: ObjectionBattleCard[];
+  call_scripts?: CallScript[];
+  cadence_config?: OutcomeCadenceConfig;
+  assistance_tickets?: AssistanceTicket[];
 }
 
 function resolveDataDir(): string {
@@ -510,7 +520,7 @@ function initLocalStore(): LocalStoreData {
   return defaultData;
 }
 
-function saveLocalStore(data: LocalStoreData) {
+function saveLocalStore(data: LocalStoreData = localStore) {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -1273,6 +1283,9 @@ export async function addCallLog(params: {
   business_info?: string;
   logged_by?: string;
   logged_by_name?: string;
+  audio_url?: string | null;
+  audio_duration?: number | null;
+  audio_name?: string | null;
 }): Promise<CallLog> {
   const id = 'call_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
   const nowIso = new Date().toISOString();
@@ -1287,6 +1300,9 @@ export async function addCallLog(params: {
       outcome_tag: params.outcome_tag,
       business_info: params.business_info?.trim() || null,
       logged_by: params.logged_by || null,
+      audio_url: params.audio_url || null,
+      audio_duration: params.audio_duration || null,
+      audio_name: params.audio_name || null,
       created_at: nowIso,
     };
     if (params.logged_by_name) {
@@ -1300,11 +1316,16 @@ export async function addCallLog(params: {
         .select()
         .single();
 
-      if (error && payload.logged_by_name) {
-        delete payload.logged_by_name;
+      if (error && (payload.logged_by_name || payload.audio_url)) {
+        // Retry without extra columns if column does not exist in remote schema
+        const basicPayload = { ...payload };
+        delete basicPayload.logged_by_name;
+        delete basicPayload.audio_url;
+        delete basicPayload.audio_duration;
+        delete basicPayload.audio_name;
         const retry = await supabaseClient
           .from('call_logs')
-          .insert([payload])
+          .insert([basicPayload])
           .select()
           .single();
         data = retry.data;
@@ -1321,6 +1342,9 @@ export async function addCallLog(params: {
           business_info: data.business_info || undefined,
           logged_by: data.logged_by || undefined,
           logged_by_name: data.logged_by_name || params.logged_by_name,
+          audio_url: data.audio_url || params.audio_url,
+          audio_duration: data.audio_duration || params.audio_duration,
+          audio_name: data.audio_name || params.audio_name,
         };
       }
     } catch {
@@ -1338,6 +1362,9 @@ export async function addCallLog(params: {
     business_info: params.business_info?.trim() || undefined,
     logged_by: params.logged_by,
     logged_by_name: params.logged_by_name,
+    audio_url: params.audio_url,
+    audio_duration: params.audio_duration,
+    audio_name: params.audio_name,
   };
 
   localStore.call_logs.unshift(log);
@@ -1351,6 +1378,9 @@ export async function addCallLog(params: {
     business_info: log.business_info,
     logged_by: log.logged_by,
     logged_by_name: log.logged_by_name,
+    audio_url: log.audio_url,
+    audio_duration: log.audio_duration,
+    audio_name: log.audio_name,
   };
 }
 
@@ -2778,3 +2808,870 @@ export async function flushUserData(userIds: string[]): Promise<{
     deletedDirectivesCount,
   };
 }
+
+// -----------------------------------------------------------------------------
+// BULK IMPORT & DEDUPLICATION OPERATIONS
+// -----------------------------------------------------------------------------
+
+export interface DuplicateCheckResult {
+  rowIndex: number;
+  matchedBy: 'phone' | 'email';
+  incoming: {
+    name?: string;
+    phone: string;
+    email?: string;
+    company?: string;
+  };
+  existing: {
+    id: string;
+    name: string;
+    phone: string;
+    email?: string;
+    status: string;
+    assigned_to?: string;
+    assigned_to_name?: string;
+    business_info?: string;
+  };
+}
+
+export interface BulkImportItem {
+  phone: string;
+  name: string;
+  email?: string;
+  business_notes?: string;
+  source?: string;
+  priority?: Priority;
+  assignedTo?: string | null;
+  business_info?: string;
+}
+
+export interface BulkImportOptions {
+  duplicateHandling: 'skip' | 'overwrite' | 'import_as_duplicate';
+  defaultAssignee?: string | null;
+  roundRobinUserIds?: string[];
+  importedById: string;
+}
+
+export async function bulkCheckLeadDuplicates(
+  incomingLeads: Array<{
+    phone: string;
+    email?: string;
+    name?: string;
+    company?: string;
+  }>
+): Promise<{
+  totalIncoming: number;
+  duplicateCount: number;
+  cleanCount: number;
+  duplicates: DuplicateCheckResult[];
+}> {
+  const users = await listUsers();
+  const userMap = new Map(users.map((u) => [u.id, u.name]));
+
+  // Retrieve existing leads
+  let existingLeadsList: Array<{
+    id: string;
+    name: string;
+    phone: string;
+    email?: string;
+    status: string;
+    assigned_to?: string;
+    business_info?: string;
+  }> = [];
+
+  if (supabaseClient) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('leads')
+        .select('id, name, phone, email, status, assigned_to, business_info');
+      if (!error && data) {
+        existingLeadsList = data;
+      }
+    } catch (e) {
+      console.error('Error fetching leads for duplicate check:', e);
+    }
+  } else {
+    existingLeadsList = localStore.leads.map((l) => ({
+      id: l.id,
+      name: l.name,
+      phone: l.phone,
+      email: l.email,
+      status: l.status,
+      assigned_to: l.assigned_to,
+      business_info: l.business_info,
+    }));
+  }
+
+  // Create fast lookup maps
+  const phoneMap = new Map<string, typeof existingLeadsList[0]>();
+  const emailMap = new Map<string, typeof existingLeadsList[0]>();
+
+  for (const ex of existingLeadsList) {
+    if (ex.phone) {
+      const cleaned = cleanPhone(ex.phone);
+      if (cleaned) phoneMap.set(cleaned, ex);
+    }
+    if (ex.email) {
+      const normEmail = ex.email.trim().toLowerCase();
+      if (normEmail) emailMap.set(normEmail, ex);
+    }
+  }
+
+  const duplicates: DuplicateCheckResult[] = [];
+
+  incomingLeads.forEach((inc, idx) => {
+    const rawPhone = inc.phone || '';
+    const cleaned = cleanPhone(rawPhone);
+    const normEmail = inc.email ? inc.email.trim().toLowerCase() : '';
+
+    let matched: typeof existingLeadsList[0] | undefined;
+    let matchedBy: 'phone' | 'email' = 'phone';
+
+    if (cleaned && phoneMap.has(cleaned)) {
+      matched = phoneMap.get(cleaned);
+      matchedBy = 'phone';
+    } else if (normEmail && emailMap.has(normEmail)) {
+      matched = emailMap.get(normEmail);
+      matchedBy = 'email';
+    }
+
+    if (matched) {
+      duplicates.push({
+        rowIndex: idx,
+        matchedBy,
+        incoming: {
+          name: inc.name,
+          phone: inc.phone,
+          email: inc.email,
+          company: inc.company,
+        },
+        existing: {
+          id: matched.id,
+          name: matched.name,
+          phone: matched.phone,
+          email: matched.email,
+          status: matched.status,
+          assigned_to: matched.assigned_to,
+          assigned_to_name: matched.assigned_to ? userMap.get(matched.assigned_to) : undefined,
+          business_info: matched.business_info,
+        },
+      });
+    }
+  });
+
+  return {
+    totalIncoming: incomingLeads.length,
+    duplicateCount: duplicates.length,
+    cleanCount: Math.max(0, incomingLeads.length - duplicates.length),
+    duplicates,
+  };
+}
+
+export async function bulkImportLeads(
+  items: BulkImportItem[],
+  options: BulkImportOptions
+): Promise<{
+  totalProcessed: number;
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  createdLeadIds: string[];
+  updatedLeadIds: string[];
+  errors: string[];
+}> {
+  // Retrieve existing leads for matching
+  let existingLeadsList: Lead[] = [];
+  if (supabaseClient) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('leads')
+        .select('*');
+      if (!error && data) {
+        existingLeadsList = data as Lead[];
+      }
+    } catch (e) {
+      console.error('Error loading leads during bulkImport:', e);
+    }
+  } else {
+    existingLeadsList = [...localStore.leads];
+  }
+
+  const phoneMap = new Map<string, Lead>();
+  const emailMap = new Map<string, Lead>();
+
+  for (const ex of existingLeadsList) {
+    if (ex.phone) {
+      const cleaned = cleanPhone(ex.phone);
+      if (cleaned) phoneMap.set(cleaned, ex);
+    }
+    if (ex.email) {
+      const normEmail = ex.email.trim().toLowerCase();
+      if (normEmail) emailMap.set(normEmail, ex);
+    }
+  }
+
+  let roundRobinIndex = 0;
+  const activeRoundRobinIds = (options.roundRobinUserIds || []).filter(Boolean);
+
+  const createdLeadIds: string[] = [];
+  const updatedLeadIds: string[] = [];
+  const errors: string[] = [];
+  let skippedCount = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const cleanedPhone = cleanPhone(item.phone || '');
+    if (!cleanedPhone || cleanedPhone.length < 4) {
+      errors.push(`Row ${i + 1}: Skipped due to invalid or missing phone number (${item.phone || 'none'})`);
+      skippedCount++;
+      continue;
+    }
+
+    const normEmail = item.email ? item.email.trim().toLowerCase() : '';
+    const existing = phoneMap.get(cleanedPhone) || (normEmail ? emailMap.get(normEmail) : undefined);
+
+    // Determine target assignee
+    let targetAssignee: string | null = null;
+    if (item.assignedTo) {
+      targetAssignee = item.assignedTo;
+    } else if (activeRoundRobinIds.length > 0) {
+      targetAssignee = activeRoundRobinIds[roundRobinIndex % activeRoundRobinIds.length];
+      roundRobinIndex++;
+    } else if (options.defaultAssignee) {
+      targetAssignee = options.defaultAssignee;
+    } else {
+      targetAssignee = options.importedById;
+    }
+
+    if (existing) {
+      if (options.duplicateHandling === 'skip') {
+        skippedCount++;
+        continue;
+      }
+
+      if (options.duplicateHandling === 'overwrite') {
+        try {
+          const updates: Partial<Lead> = {};
+          if (item.name && item.name !== 'Unnamed Lead') updates.name = item.name.trim();
+          if (item.email && !existing.email) updates.email = item.email.trim();
+          if (item.business_info) {
+            updates.business_info = existing.business_info
+              ? `${existing.business_info} | ${item.business_info.trim()}`
+              : item.business_info.trim();
+          }
+          if (item.business_notes) {
+            updates.business_notes = existing.business_notes
+              ? `${existing.business_notes}\n[Imported Notes]: ${item.business_notes.trim()}`
+              : item.business_notes.trim();
+          }
+          if (item.source && !existing.source) updates.source = item.source.trim();
+          if (item.priority) updates.priority = item.priority;
+          if (targetAssignee && !existing.assigned_to) {
+            updates.assigned_to = targetAssignee;
+          }
+
+          await updateLead(existing.id, updates);
+          updatedLeadIds.push(existing.id);
+        } catch (err: any) {
+          errors.push(`Row ${i + 1} (${item.name}): Failed to update existing lead: ${err.message}`);
+        }
+        continue;
+      }
+
+      // If options.duplicateHandling === 'import_as_duplicate'
+      let phoneToInsert = item.phone.trim();
+      if (phoneMap.has(cleanedPhone)) {
+        phoneToInsert = `${item.phone.trim()} (#${Date.now().toString().slice(-4)})`;
+      }
+
+      try {
+        const created = await createLead({
+          name: item.name?.trim() || 'Unnamed Lead',
+          phone: phoneToInsert,
+          email: item.email?.trim() || undefined,
+          business_notes: item.business_notes?.trim() || '',
+          source: item.source?.trim() || 'CSV Import',
+          priority: item.priority === 'High' ? 'High' : 'Normal',
+          assignedTo: targetAssignee,
+        });
+        if (item.business_info) {
+          await updateLead(created.id, { business_info: item.business_info.trim() });
+        }
+        createdLeadIds.push(created.id);
+        phoneMap.set(cleanPhone(phoneToInsert), created);
+        if (created.email) emailMap.set(created.email.trim().toLowerCase(), created);
+      } catch (err: any) {
+        errors.push(`Row ${i + 1} (${item.name}): Failed to create duplicate: ${err.message}`);
+      }
+      continue;
+    }
+
+    // Completely new lead
+    try {
+      const created = await createLead({
+        name: item.name?.trim() || 'Unnamed Lead',
+        phone: item.phone.trim(),
+        email: item.email?.trim() || undefined,
+        business_notes: item.business_notes?.trim() || '',
+        source: item.source?.trim() || 'CSV Import',
+        priority: item.priority === 'High' ? 'High' : 'Normal',
+        assignedTo: targetAssignee,
+      });
+      if (item.business_info) {
+        await updateLead(created.id, { business_info: item.business_info.trim() });
+      }
+      createdLeadIds.push(created.id);
+      phoneMap.set(cleanedPhone, created);
+      if (created.email) emailMap.set(created.email.trim().toLowerCase(), created);
+    } catch (err: any) {
+      errors.push(`Row ${i + 1} (${item.name}): ${err.message}`);
+    }
+  }
+
+  return {
+    totalProcessed: items.length,
+    createdCount: createdLeadIds.length,
+    updatedCount: updatedLeadIds.length,
+    skippedCount,
+    createdLeadIds,
+    updatedLeadIds,
+    errors,
+  };
+}
+
+// ==========================================
+// OBJECTION BATTLE CARDS & CALL SCRIPTS STORE
+// ==========================================
+
+export const DEFAULT_OBJECTION_CARDS: ObjectionBattleCard[] = [
+  {
+    id: 'obj-price-1',
+    category: 'pricing',
+    objection: 'Your service is too expensive / We have no budget right now',
+    rebuttal: 'I completely understand that budget is top of mind. Many of our current clients felt the same way initially until they saw how much revenue was slipping through the cracks without our automated pipeline tracking. May I ask what benchmark you are comparing us against?',
+    talking_points: [
+      'Acknowledge and validate without immediately discounting.',
+      'Frame our solution as an investment with tangible ROI rather than a cost center.',
+      'Offer a flexible milestone pilot or low-risk trial phase.',
+    ],
+    follow_up_question: 'If budget wasn’t a constraint, is this the kind of solution that would solve your current operational bottlenecks?',
+    created_at: new Date().toISOString(),
+    is_custom: false,
+  },
+  {
+    id: 'obj-competitor-1',
+    category: 'competition',
+    objection: 'We already use another vendor / competitor',
+    rebuttal: 'That’s great to hear! They are a reputable player in our industry. Most of our happiest partners were previously using them before switching over to Voxel for our zero-latency power calling and live manager coaching directives. What is one thing you wish they did better for your team?',
+    talking_points: [
+      'Do not trash the competitor; praise the prospect for taking the problem seriously.',
+      'Highlight Voxel’s unique speed: real-time objection battle cards and direct manager directives.',
+      'Position Voxel as a complementary tool or an upgrade when their contract comes up for renewal.',
+    ],
+    follow_up_question: 'When does your current contract with them come up for review or renewal?',
+    created_at: new Date().toISOString(),
+    is_custom: false,
+  },
+  {
+    id: 'obj-email-1',
+    category: 'timing',
+    objection: 'Just send me an email with the information',
+    rebuttal: 'I would be delighted to send that over right away! We have tailored materials for different business sizes. To make sure I only send you what is 100% relevant and don’t clutter your inbox with 20 pages of fluff, what is the single biggest priority on your plate this quarter?',
+    talking_points: [
+      'Agree cheerfully to disarm the reflex brush-off.',
+      'Ask a crisp diagnostic question before letting them hang up.',
+      'Lock in permission for a 5-minute review call once they receive it.',
+    ],
+    follow_up_question: 'I’ll send that over to your inbox today. Can we grab 5 minutes on Thursday at 10 AM to walk through the 2 numbers that matter most to you?',
+    created_at: new Date().toISOString(),
+    is_custom: false,
+  },
+  {
+    id: 'obj-gatekeeper-1',
+    category: 'gatekeeper',
+    objection: 'They are not available / We don’t take sales calls',
+    rebuttal: 'Understood, thank you! I know you protect their schedule carefully. I am calling specifically regarding their active pipeline and team follow-up workflows. Would you recommend catching them earlier in the morning around 8:30 AM or later in the afternoon around 4:30 PM?',
+    talking_points: [
+      'Treat the gatekeeper with high respect as a valued partner, not an obstacle.',
+      'Use alternative-choice timing (morning vs afternoon) rather than open-ended yes/no.',
+      'Ask for their direct name so you can thank them next time.',
+    ],
+    follow_up_question: 'Who should I mention referred me when I follow up with them on Thursday?',
+    created_at: new Date().toISOString(),
+    is_custom: false,
+  },
+  {
+    id: 'obj-timing-1',
+    category: 'timing',
+    objection: 'Call me back in 6 months / Bad timing',
+    rebuttal: 'I can certainly do that! Before I update my calendar for 6 months out, usually when people say timing is bad, it means either this isn’t a priority right now, or you are swamped with other initiatives. Which one is it for you?',
+    talking_points: [
+      'Politely qualify whether it’s a polite no or genuine seasonal timing.',
+      'Uncover the pending milestone or trigger event.',
+      'Schedule a concrete follow-up date rather than vague "sometime later".',
+    ],
+    follow_up_question: 'What changes between now and then that will make 6 months from now the right moment?',
+    created_at: new Date().toISOString(),
+    is_custom: false,
+  },
+  {
+    id: 'obj-authority-1',
+    category: 'authority',
+    objection: 'I am not the decision maker on this',
+    rebuttal: 'Thank you for letting me know! That saves us both time. Since you are in the trenches dealing with these daily workflows, your perspective is crucial. How is your team currently handling this, and who else would be involved in evaluating a faster system?',
+    talking_points: [
+      'Turn an apparent roadblock into an internal champion / scout.',
+      'Gather organizational intel on decision hierarchy.',
+      'Ask for a warm introduction or permission to mention their name.',
+    ],
+    follow_up_question: 'Could you introduce me to the person heading up this department so I can share what you and I discussed?',
+    created_at: new Date().toISOString(),
+    is_custom: false,
+  },
+];
+
+export const DEFAULT_CALL_SCRIPTS: CallScript[] = [
+  {
+    id: 'script-cold-intro',
+    title: 'High-Impact Cold Introduction (30-Sec Hook)',
+    category: 'cold_intro',
+    content: `Hi {{name}}, this is [Your Name] with Voxel. I know I caught you out of the blue, but I was looking into {{company}} and noticed how quickly your team is expanding outreach.
+
+We help sales teams double their daily connection rate without manual spreadsheet errors or missed follow-ups.
+
+I’m calling simply to see if you’d be open to a 3-minute chat to see if this is even relevant for {{company}}?`,
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'script-discovery',
+    title: 'Lead Qualification & Problem Discovery',
+    category: 'discovery',
+    content: `Thanks for taking my call, {{name}}. To understand if we can help {{company}}:
+
+1. How is your team currently tracking follow-ups when a prospect says "call me back next Tuesday"?
+2. What happens when a hot prospect doesn't pick up on the first 2 dials?
+3. If you could eliminate 30 minutes of manual note-taking every single day, what would that mean for your pipeline?`,
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'script-gatekeeper',
+    title: 'Gatekeeper Bridge & Executive Access',
+    category: 'gatekeeper',
+    content: `Hi there! I was hoping you could point me in the right direction. I’m looking for the person at {{company}} who oversees sales operations and outreach pipelines. Would that be {{name}} or someone else on their executive team?`,
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'script-voicemail',
+    title: 'High-Response Voicemail Drop',
+    category: 'voicemail',
+    content: `Hi {{name}}, this is [Your Name] with Voxel. I’m calling regarding {{company}}’s outbound pipeline and follow-up efficiency. 
+
+I have a quick idea that recently helped a peer in your space increase their connect rate by 38%. 
+
+Give me a quick call back at [Your Phone] or check your text messages shortly. Again, that's [Your Name] at [Your Phone]. Thank you!`,
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: 'script-closing',
+    title: 'Soft Close to 15-Minute Zoom Demo',
+    category: 'closing',
+    content: `Based on what you just shared about {{company}}'s bottlenecks, it sounds like we could save your reps several hours a week while boosting your booked appointments.
+
+I don't expect you to make any decisions today. How does your calendar look for Thursday at 10:00 AM or Friday at 2:00 PM for a quick 15-minute screen share?`,
+    created_at: new Date().toISOString(),
+  },
+];
+
+export async function getObjectionCards(): Promise<ObjectionBattleCard[]> {
+  if (!localStore.objection_cards || localStore.objection_cards.length === 0) {
+    localStore.objection_cards = [...DEFAULT_OBJECTION_CARDS];
+    saveLocalStore();
+  }
+  return localStore.objection_cards;
+}
+
+export async function createObjectionCard(data: {
+  category: ObjectionBattleCard['category'];
+  objection: string;
+  rebuttal: string;
+  talking_points?: string[];
+  follow_up_question?: string;
+}): Promise<ObjectionBattleCard> {
+  const cards = await getObjectionCards();
+  const newCard: ObjectionBattleCard = {
+    id: 'obj-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    category: data.category,
+    objection: data.objection.trim(),
+    rebuttal: data.rebuttal.trim(),
+    talking_points: data.talking_points?.filter((t) => t.trim().length > 0) || [],
+    follow_up_question: data.follow_up_question?.trim() || undefined,
+    created_at: new Date().toISOString(),
+    is_custom: true,
+  };
+  cards.unshift(newCard);
+  localStore.objection_cards = cards;
+  saveLocalStore();
+  return newCard;
+}
+
+export async function updateObjectionCard(
+  id: string,
+  updates: Partial<Omit<ObjectionBattleCard, 'id' | 'created_at'>>
+): Promise<ObjectionBattleCard> {
+  const cards = await getObjectionCards();
+  const idx = cards.findIndex((c) => c.id === id);
+  if (idx === -1) {
+    throw new Error('Objection battle card not found');
+  }
+  const updated: ObjectionBattleCard = {
+    ...cards[idx],
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+  cards[idx] = updated;
+  localStore.objection_cards = cards;
+  saveLocalStore();
+  return updated;
+}
+
+export async function deleteObjectionCard(id: string): Promise<boolean> {
+  const cards = await getObjectionCards();
+  const filtered = cards.filter((c) => c.id !== id);
+  if (filtered.length === cards.length) return false;
+  localStore.objection_cards = filtered;
+  saveLocalStore();
+  return true;
+}
+
+export async function resetDefaultObjectionCards(): Promise<ObjectionBattleCard[]> {
+  localStore.objection_cards = [...DEFAULT_OBJECTION_CARDS];
+  saveLocalStore();
+  return localStore.objection_cards;
+}
+
+export async function getCallScripts(): Promise<CallScript[]> {
+  if (!localStore.call_scripts || localStore.call_scripts.length === 0) {
+    localStore.call_scripts = [...DEFAULT_CALL_SCRIPTS];
+    saveLocalStore();
+  }
+  return localStore.call_scripts;
+}
+
+export async function createCallScript(data: {
+  title: string;
+  category: CallScript['category'];
+  content: string;
+}): Promise<CallScript> {
+  const scripts = await getCallScripts();
+  const newScript: CallScript = {
+    id: 'script-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    title: data.title.trim(),
+    category: data.category,
+    content: data.content.trim(),
+    created_at: new Date().toISOString(),
+  };
+  scripts.push(newScript);
+  localStore.call_scripts = scripts;
+  saveLocalStore();
+  return newScript;
+}
+
+export async function updateCallScript(
+  id: string,
+  updates: Partial<Omit<CallScript, 'id' | 'created_at'>>
+): Promise<CallScript> {
+  const scripts = await getCallScripts();
+  const idx = scripts.findIndex((s) => s.id === id);
+  if (idx === -1) {
+    throw new Error('Call script not found');
+  }
+  const updated: CallScript = {
+    ...scripts[idx],
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+  scripts[idx] = updated;
+  localStore.call_scripts = scripts;
+  saveLocalStore();
+  return updated;
+}
+
+export async function deleteCallScript(id: string): Promise<boolean> {
+  const scripts = await getCallScripts();
+  const filtered = scripts.filter((s) => s.id !== id);
+  if (filtered.length === scripts.length) return false;
+  localStore.call_scripts = filtered;
+  saveLocalStore();
+  return true;
+}
+
+export async function resetDefaultCallScripts(): Promise<CallScript[]> {
+  localStore.call_scripts = [...DEFAULT_CALL_SCRIPTS];
+  saveLocalStore();
+  return localStore.call_scripts;
+}
+
+// -----------------------------------------------------------------------------
+// QUICK-OUTCOME CADENCE CONFIGURATION
+// -----------------------------------------------------------------------------
+export const DEFAULT_CADENCE_CONFIG: OutcomeCadenceConfig = {
+  'Interested': {
+    outcome: 'Interested',
+    delayValue: 24,
+    delayUnit: 'hours',
+    preferredHour: 10,
+    defaultPriority: 'High',
+    autoArchive: false,
+    notesSnippet: 'Prospect interested in demo and overview.',
+  },
+  'Call Back Later': {
+    outcome: 'Call Back Later',
+    delayValue: 48,
+    delayUnit: 'hours',
+    preferredHour: 10,
+    defaultPriority: 'Normal',
+    autoArchive: false,
+    notesSnippet: 'Prospect requested follow-up call.',
+  },
+  'Busy': {
+    outcome: 'Busy',
+    delayValue: 2,
+    delayUnit: 'hours',
+    defaultPriority: 'Normal',
+    autoArchive: false,
+    notesSnippet: 'Line was busy. Re-dial required.',
+  },
+  "Couldn't Connect": {
+    outcome: "Couldn't Connect",
+    delayValue: 48,
+    delayUnit: 'hours',
+    preferredHour: 10,
+    defaultPriority: 'Normal',
+    autoArchive: false,
+    notesSnippet: 'Rang through / left voicemail.',
+  },
+  'Closed/Matured': {
+    outcome: 'Closed/Matured',
+    delayValue: 0,
+    delayUnit: 'hours',
+    defaultPriority: 'Normal',
+    autoArchive: true,
+    notesSnippet: 'Deal closed and finalized!',
+  },
+  'Service Denied': {
+    outcome: 'Service Denied',
+    delayValue: 0,
+    delayUnit: 'hours',
+    defaultPriority: 'Normal',
+    autoArchive: true,
+    notesSnippet: 'Prospect declined service. Requested removal.',
+  },
+  'Other': {
+    outcome: 'Other',
+    delayValue: 24,
+    delayUnit: 'hours',
+    preferredHour: 10,
+    defaultPriority: 'Normal',
+    autoArchive: false,
+    notesSnippet: 'General follow-up touchpoint.',
+  },
+};
+
+export async function getCadenceConfig(): Promise<OutcomeCadenceConfig> {
+  if (!localStore.cadence_config) {
+    localStore.cadence_config = { ...DEFAULT_CADENCE_CONFIG };
+    saveLocalStore();
+  }
+  return localStore.cadence_config;
+}
+
+export async function updateCadenceConfig(config: OutcomeCadenceConfig): Promise<OutcomeCadenceConfig> {
+  localStore.cadence_config = {
+    ...DEFAULT_CADENCE_CONFIG,
+    ...config,
+  };
+  saveLocalStore();
+  return localStore.cadence_config;
+}
+
+export async function resetCadenceConfig(): Promise<OutcomeCadenceConfig> {
+  localStore.cadence_config = { ...DEFAULT_CADENCE_CONFIG };
+  saveLocalStore();
+  return localStore.cadence_config;
+}
+
+// -----------------------------------------------------------------------------
+// ASSISTANCE TICKETS (Colleague Lead Takeover Requests)
+// -----------------------------------------------------------------------------
+
+export async function listAssistanceTickets(params?: {
+  status?: 'pending' | 'accepted' | 'cancelled' | 'all';
+  requestedById?: string;
+  targetAgentId?: string;
+  leadId?: string;
+}): Promise<AssistanceTicket[]> {
+  if (!localStore.assistance_tickets) {
+    localStore.assistance_tickets = [];
+  }
+
+  let list = [...localStore.assistance_tickets];
+
+  if (params?.status && params.status !== 'all') {
+    list = list.filter((t) => t.status === params.status);
+  }
+  if (params?.requestedById) {
+    list = list.filter((t) => t.requested_by_id === params.requestedById);
+  }
+  if (params?.targetAgentId) {
+    list = list.filter((t) => !t.target_agent_id || t.target_agent_id === params.targetAgentId);
+  }
+  if (params?.leadId) {
+    list = list.filter((t) => t.lead_id === params.leadId);
+  }
+
+  // Sort descending by created_at
+  list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return list;
+}
+
+export async function createAssistanceTicket(params: {
+  leadId: string;
+  requestedBy: User;
+  reason: AssistanceReason;
+  reasonLabel?: string;
+  notes: string;
+  targetAgentId?: string | null;
+  targetAgentName?: string | null;
+}): Promise<AssistanceTicket> {
+  const lead = await getLeadById(params.leadId);
+  if (!lead) {
+    throw new Error('Lead not found');
+  }
+
+  if (!localStore.assistance_tickets) {
+    localStore.assistance_tickets = [];
+  }
+
+  const id = 'ticket_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+  const nowIso = new Date().toISOString();
+
+  const reasonLabels: Record<AssistanceReason, string> = {
+    high_workload: 'High Workload / Lead Capacity',
+    bad_match: 'Lead Mismatch / Different Style Needed',
+    domain_expertise: 'Domain Expertise / Specialized Fit',
+    language_fit: 'Language or Regional Fit',
+    other: 'General Assistance / Takeover',
+  };
+
+  const ticket: AssistanceTicket = {
+    id,
+    lead_id: lead.id,
+    lead_name: lead.name,
+    lead_phone: lead.phone,
+    lead_company: lead.business_info || (lead as any).company || undefined,
+    lead_status: lead.status,
+    lead_priority: lead.priority,
+    requested_by_id: params.requestedBy.id,
+    requested_by_name: params.requestedBy.name,
+    requested_by_email: params.requestedBy.email,
+    requested_by_avatar_url: params.requestedBy.avatarUrl,
+    target_agent_id: params.targetAgentId || null,
+    target_agent_name: params.targetAgentName || null,
+    reason: params.reason,
+    reason_label: params.reasonLabel || reasonLabels[params.reason] || 'Assistance Request',
+    notes: params.notes.trim(),
+    status: 'pending',
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+
+  localStore.assistance_tickets.unshift(ticket);
+  saveLocalStore();
+  return ticket;
+}
+
+export async function acceptAssistanceTicket(params: {
+  ticketId: string;
+  acceptingUser: User;
+}): Promise<{ ticket: AssistanceTicket; lead: Lead }> {
+  if (!localStore.assistance_tickets) {
+    localStore.assistance_tickets = [];
+  }
+
+  const ticketIndex = localStore.assistance_tickets.findIndex((t) => t.id === params.ticketId);
+  if (ticketIndex === -1) {
+    throw new Error('Assistance ticket not found');
+  }
+
+  const ticket = localStore.assistance_tickets[ticketIndex];
+  if (ticket.status !== 'pending') {
+    throw new Error(`Ticket is already ${ticket.status}`);
+  }
+
+  if (ticket.requested_by_id === params.acceptingUser.id) {
+    throw new Error('You cannot accept your own assistance request');
+  }
+
+  const nowIso = new Date().toISOString();
+  ticket.status = 'accepted';
+  ticket.accepted_by_id = params.acceptingUser.id;
+  ticket.accepted_by_name = params.acceptingUser.name;
+  ticket.accepted_by_email = params.acceptingUser.email;
+  ticket.accepted_at = nowIso;
+  ticket.updated_at = nowIso;
+
+  // Reassign the lead to the accepting user!
+  const targetLead = await getLeadById(ticket.lead_id);
+  if (!targetLead) {
+    throw new Error('Target lead not found');
+  }
+
+  const previousOwnerName = targetLead.assigned_to_name || ticket.requested_by_name || 'Previous Agent';
+
+  const updatedLead = await reassignLead({
+    leadId: targetLead.id,
+    newOwnerId: params.acceptingUser.id,
+    reassignedById: params.acceptingUser.id,
+  });
+
+  // Log an audit trail entry on the lead call logs
+  await addCallLog({
+    leadId: targetLead.id,
+    outcome_tag: 'Other',
+    summary: `Lead Reassigned via Assistance Request`,
+    full_notes: `Lead transferred from ${previousOwnerName} to ${params.acceptingUser.name} upon accepting ticket (${ticket.reason_label}). Handover notes: ${ticket.notes || 'None provided'}`,
+    logged_by: params.acceptingUser.email,
+    logged_by_name: params.acceptingUser.name,
+  });
+
+  saveLocalStore();
+  return { ticket, lead: updatedLead };
+}
+
+export async function cancelAssistanceTicket(params: {
+  ticketId: string;
+  cancellingUserId: string;
+}): Promise<AssistanceTicket> {
+  if (!localStore.assistance_tickets) {
+    localStore.assistance_tickets = [];
+  }
+
+  const ticket = localStore.assistance_tickets.find((t) => t.id === params.ticketId);
+  if (!ticket) {
+    throw new Error('Assistance ticket not found');
+  }
+
+  if (ticket.status !== 'pending') {
+    throw new Error(`Ticket is already ${ticket.status}`);
+  }
+
+  const nowIso = new Date().toISOString();
+  ticket.status = 'cancelled';
+  ticket.updated_at = nowIso;
+
+  saveLocalStore();
+  return ticket;
+}
+
+
+

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clock, Phone, AlertTriangle, ArrowRight, Flame } from 'lucide-react';
+import { Clock, Phone, AlertTriangle, ArrowRight, Flame, PhoneCall } from 'lucide-react';
 import type { Lead } from '../types';
 import { formatFriendlyTime } from '../lib/dateUtils';
 import { ContactActionMenu } from './ContactActionMenu';
@@ -8,18 +8,20 @@ interface DueTodaySectionProps {
   leads: Lead[];
   onLogCall: (lead: Lead) => void;
   onOpenDetail: (lead: Lead) => void;
+  onStartPowerDialer?: (leads: Lead[]) => void;
 }
 
 export const DueTodaySection: React.FC<DueTodaySectionProps> = ({
   leads,
   onLogCall,
   onOpenDetail,
+  onStartPowerDialer,
 }) => {
   if (leads.length === 0) return null;
 
   return (
     <div className="mb-6 rounded-2xl border border-amber-300/80 bg-gradient-to-r from-amber-50/90 via-[#FFFDF9] to-amber-50/70 p-4 sm:p-5 shadow-xs">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-amber-600 text-white flex items-center justify-center shadow-xs">
             <Clock className="w-4 h-4" />
@@ -36,6 +38,17 @@ export const DueTodaySection: React.FC<DueTodaySectionProps> = ({
             </p>
           </div>
         </div>
+
+        {onStartPowerDialer && leads.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onStartPowerDialer(leads)}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer shrink-0"
+          >
+            <PhoneCall className="w-4 h-4" />
+            <span>Start Call Session ({leads.length})</span>
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

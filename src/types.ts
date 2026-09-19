@@ -40,6 +40,9 @@ export interface CallLog {
   business_info?: string;
   logged_by?: string;
   logged_by_name?: string;
+  audio_url?: string | null;
+  audio_duration?: number | null;
+  audio_name?: string | null;
 }
 
 export interface Lead {
@@ -65,6 +68,7 @@ export interface Lead {
   original_owner_name?: string;
   reassigned_at?: string | null;
   reassigned_by?: string | null;
+  ai_health?: LeadHealthAssessment;
 }
 
 export interface PotentialCustomer {
@@ -105,6 +109,39 @@ export interface PinnedComment {
   created_at: string;
 }
 
+export type AssistanceReason =
+  | 'high_workload'
+  | 'bad_match'
+  | 'domain_expertise'
+  | 'language_fit'
+  | 'other';
+
+export interface AssistanceTicket {
+  id: string;
+  lead_id: string;
+  lead_name: string;
+  lead_phone: string;
+  lead_company?: string;
+  lead_status?: string;
+  lead_priority?: Priority;
+  requested_by_id: string;
+  requested_by_name: string;
+  requested_by_email: string;
+  requested_by_avatar_url?: string | null;
+  target_agent_id?: string | null;
+  target_agent_name?: string | null;
+  reason: AssistanceReason;
+  reason_label: string;
+  notes: string;
+  status: 'pending' | 'accepted' | 'cancelled';
+  accepted_by_id?: string | null;
+  accepted_by_name?: string | null;
+  accepted_by_email?: string | null;
+  accepted_at?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface NewsletterLog {
   id: string;
   subject: string;
@@ -123,3 +160,120 @@ export interface AuthState {
   user: User | null;
   token: string | null;
 }
+
+export type ObjectionCategory = 'pricing' | 'timing' | 'competition' | 'gatekeeper' | 'authority' | 'general';
+
+export interface ObjectionBattleCard {
+  id: string;
+  category: ObjectionCategory;
+  objection: string;
+  rebuttal: string;
+  talking_points?: string[];
+  follow_up_question?: string;
+  created_at: string;
+  updated_at?: string;
+  is_custom?: boolean;
+}
+
+export interface CallScript {
+  id: string;
+  title: string;
+  category: 'cold_intro' | 'discovery' | 'gatekeeper' | 'voicemail' | 'closing' | 'custom';
+  content: string; // supports {{name}}, {{company}}, {{notes}}
+  created_at: string;
+  updated_at?: string;
+}
+
+export type CadenceIntervalUnit = 'hours' | 'days';
+
+export interface OutcomeCadenceRule {
+  outcome: OutcomeTag;
+  delayValue: number; // e.g., 2, 24, 48
+  delayUnit: CadenceIntervalUnit; // 'hours' | 'days'
+  preferredHour?: number; // e.g., 10 for 10:00 AM, undefined for exactly +delayValue
+  defaultPriority?: Priority;
+  autoArchive?: boolean;
+  notesSnippet?: string;
+}
+
+export type OutcomeCadenceConfig = Record<OutcomeTag, OutcomeCadenceRule>;
+
+export interface EnhancedCallNotes {
+  cleanSummary: string;
+  coreTakeaways: string[];
+  painPoints: string[];
+  sentiment: 'Positive' | 'Neutral' | 'Skeptical' | 'Frustrated';
+  nextActions: string[];
+  formattedNotes: string;
+}
+
+export type FollowUpTone = 'professional' | 'warm_casual' | 'urgent_direct' | 'value_focused';
+
+export interface FollowUpComposerResult {
+  whatsapp: string;
+  emailSubject: string;
+  emailBody: string;
+  sms: string;
+}
+
+export interface LeadHealthAssessment {
+  leadId: string;
+  healthScore: number; // 0 to 100
+  category: 'Hot' | 'Warm' | 'Cooling' | 'At-Risk';
+  churnRisk: 'Low' | 'Medium' | 'High' | 'Critical';
+  riskDiagnosis: string;
+  recommendedTactic: string;
+  decayFactors: string[];
+  assessedAt: string;
+}
+
+export interface AdminGeminiConfig {
+  hasApiKey: boolean;
+  keyPreview: string;
+  model: string;
+  source: 'admin' | 'env' | 'none';
+  availableModels: Array<{ id: string; name: string; description: string; isDefault?: boolean }>;
+}
+
+export interface LeaderboardMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  avatarUrl?: string | null;
+  dialsCount: number;
+  connectsCount: number;
+  meetingsCount: number;
+  closedCount: number;
+  directivesCompleted: number;
+  score: number;
+  rank?: number;
+}
+
+export interface ActivityFeedItem {
+  id: string;
+  type: 'call' | 'directive_completed' | 'lead_created' | 'closed_deal';
+  userId: string;
+  userName: string;
+  userAvatar?: string | null;
+  leadId?: string;
+  leadName?: string;
+  outcomeTag?: OutcomeTag;
+  summary?: string;
+  timestamp: string;
+  audioUrl?: string | null;
+  audioDuration?: number | null;
+}
+
+export interface LeaderboardStats {
+  period: 'today' | 'week' | 'month' | 'all';
+  leaderboard: LeaderboardMember[];
+  activityFeed: ActivityFeedItem[];
+  totals: {
+    totalDials: number;
+    totalConnects: number;
+    totalMeetings: number;
+    totalClosed: number;
+  };
+}
+

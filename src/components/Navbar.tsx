@@ -1,5 +1,5 @@
 import React from 'react';
-import { PhoneCall, CheckCircle2, Archive, Shield, Bell, BellOff, LogOut, Plus, User as UserIcon } from 'lucide-react';
+import { PhoneCall, CheckCircle2, Archive, Shield, Bell, BellOff, LogOut, Plus, User as UserIcon, FileSpreadsheet } from 'lucide-react';
 import type { User } from '../types';
 import { UserAvatar } from './UserAvatar';
 
@@ -13,10 +13,12 @@ interface NavbarProps {
   user: User | null;
   onLogout: () => void;
   onOpenNewLeadModal: () => void;
+  onOpenCsvImportModal?: () => void;
   notificationPermission: NotificationPermission;
   onRequestNotificationPermission: () => void;
   onOpenPushModal?: () => void;
   isPushActive?: boolean;
+  onStartPowerDialer?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -29,10 +31,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   user,
   onLogout,
   onOpenNewLeadModal,
+  onOpenCsvImportModal,
   notificationPermission,
   onRequestNotificationPermission,
   onOpenPushModal,
   isPushActive,
+  onStartPowerDialer,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#FAF8F5]/90 backdrop-blur-md border-b border-stone-200">
@@ -168,7 +172,31 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
-            {/* Quick-Add Lead Button */}
+            {/* Quick-Add Lead, Import CSV & Power Dialer Buttons */}
+            {onStartPowerDialer && (
+              <button
+                id="navbar-power-dialer-btn"
+                onClick={onStartPowerDialer}
+                title="Launch continuous rapid calling session"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-100 hover:bg-amber-200 active:scale-[0.98] text-amber-900 border border-amber-300 text-sm font-semibold shadow-2xs transition-all cursor-pointer"
+              >
+                <PhoneCall className="w-4 h-4 text-amber-700 animate-pulse" />
+                <span className="hidden sm:inline">Power Dialer</span>
+              </button>
+            )}
+
+            {onOpenCsvImportModal && (
+              <button
+                id="import-leads-csv-btn"
+                onClick={onOpenCsvImportModal}
+                title="Bulk import leads from CSV spreadsheet"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 active:scale-[0.98] text-stone-700 text-sm font-medium shadow-2xs transition-all cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-amber-700" />
+                <span>Import CSV</span>
+              </button>
+            )}
+
             <button
               id="quick-add-lead-btn"
               onClick={onOpenNewLeadModal}

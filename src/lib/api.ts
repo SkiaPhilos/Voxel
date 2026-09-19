@@ -1,4 +1,25 @@
-import type { Lead, User, UserRole, OutcomeTag, Priority, PotentialCustomer, PinnedComment, PinnedCommentStatus, NewsletterLog } from '../types';
+import type {
+  Lead,
+  User,
+  UserRole,
+  OutcomeTag,
+  Priority,
+  PotentialCustomer,
+  PinnedComment,
+  PinnedCommentStatus,
+  NewsletterLog,
+  ObjectionBattleCard,
+  CallScript,
+  OutcomeCadenceConfig,
+  EnhancedCallNotes,
+  FollowUpComposerResult,
+  FollowUpTone,
+  LeadHealthAssessment,
+  AdminGeminiConfig,
+  LeaderboardStats,
+  AssistanceTicket,
+  AssistanceReason,
+} from '../types';
 
 const TOKEN_KEY = 'coldcrm_auth_token';
 
@@ -240,6 +261,9 @@ export const api = {
       next_action_at?: string | null;
       business_info?: string;
       priority?: Priority;
+      audio_url?: string | null;
+      audio_duration?: number | null;
+      audio_name?: string | null;
     }
   ): Promise<{ lead: Lead }> {
     return request(`/api/leads/${id}/calls`, {
@@ -252,6 +276,58 @@ export const api = {
     return request(`/api/leads/${id}/archive`, {
       method: 'POST',
       body: JSON.stringify({ archive, reason }),
+    });
+  },
+
+  async checkLeadDuplicates(leads: Array<{
+    phone: string;
+    email?: string;
+    name?: string;
+    company?: string;
+  }>): Promise<{
+    totalIncoming: number;
+    duplicateCount: number;
+    cleanCount: number;
+    duplicates: Array<{
+      rowIndex: number;
+      matchedBy: 'phone' | 'email';
+      incoming: { name?: string; phone: string; email?: string; company?: string };
+      existing: { id: string; name: string; phone: string; email?: string; status: string; assigned_to_name?: string; business_info?: string };
+    }>;
+  }> {
+    return request('/api/leads/check-duplicates', {
+      method: 'POST',
+      body: JSON.stringify({ leads }),
+    });
+  },
+
+  async bulkImportLeads(data: {
+    leads: Array<{
+      phone: string;
+      name: string;
+      email?: string;
+      business_notes?: string;
+      source?: string;
+      priority?: Priority;
+      assignedTo?: string | null;
+      business_info?: string;
+    }>;
+    duplicateHandling?: 'skip' | 'overwrite' | 'import_as_duplicate';
+    defaultAssignee?: string | null;
+    roundRobinUserIds?: string[];
+  }): Promise<{
+    success: boolean;
+    totalProcessed: number;
+    createdCount: number;
+    updatedCount: number;
+    skippedCount: number;
+    createdLeadIds: string[];
+    updatedLeadIds: string[];
+    errors: string[];
+  }> {
+    return request('/api/leads/bulk-import', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   },
 
@@ -530,4 +606,238 @@ export const api = {
       body: JSON.stringify(data),
     });
   },
+
+  // ----------------------------------------------------
+  // Objection Battle Cards & Interactive Call Scripts
+  // ----------------------------------------------------
+  async getObjectionCards(): Promise<{ cards: ObjectionBattleCard[] }> {
+    return request('/api/objection-cards');
+  },
+
+  async createObjectionCard(data: {
+    category: ObjectionBattleCard['category'];
+    objection: string;
+    rebuttal: string;
+    talking_points?: string[];
+    follow_up_question?: string;
+  }): Promise<{ card: ObjectionBattleCard }> {
+    return request('/api/objection-cards', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateObjectionCard(
+    id: string,
+    updates: Partial<Omit<ObjectionBattleCard, 'id' | 'created_at'>>
+  ): Promise<{ card: ObjectionBattleCard }> {
+    return request(`/api/objection-cards/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+
+  async deleteObjectionCard(id: string): Promise<{ success: boolean }> {
+    return request(`/api/objection-cards/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async resetDefaultObjectionCards(): Promise<{ cards: ObjectionBattleCard[]; message: string }> {
+    return request('/api/objection-cards/reset', {
+      method: 'POST',
+    });
+  },
+
+  async getCallScripts(): Promise<{ scripts: CallScript[] }> {
+    return request('/api/call-scripts');
+  },
+
+  async createCallScript(data: {
+    title: string;
+    category: CallScript['category'];
+    content: string;
+  }): Promise<{ script: CallScript }> {
+    return request('/api/call-scripts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateCallScript(
+    id: string,
+    updates: Partial<Omit<CallScript, 'id' | 'created_at'>>
+  ): Promise<{ script: CallScript }> {
+    return request(`/api/call-scripts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+
+  async deleteCallScript(id: string): Promise<{ success: boolean }> {
+    return request(`/api/call-scripts/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async resetDefaultCallScripts(): Promise<{ scripts: CallScript[]; message: string }> {
+    return request('/api/call-scripts/reset', {
+      method: 'POST',
+    });
+  },
+
+  // ----------------------------------------------------
+  // Quick-Outcome Cadence Configurations
+  // ----------------------------------------------------
+  async getCadenceConfig(): Promise<{ cadence: OutcomeCadenceConfig }> {
+    return request('/api/cadence');
+  },
+
+  async updateCadenceConfig(cadence: OutcomeCadenceConfig): Promise<{ cadence: OutcomeCadenceConfig; message: string }> {
+    return request('/api/cadence', {
+      method: 'PUT',
+      body: JSON.stringify({ cadence }),
+    });
+  },
+
+  async resetCadenceConfig(): Promise<{ cadence: OutcomeCadenceConfig; message: string }> {
+    return request('/api/cadence/reset', {
+      method: 'POST',
+    });
+  },
+
+  // ----------------------------------------------------
+  // Gemini AI Features (Server-Side)
+  // ----------------------------------------------------
+  async enhanceCallNotes(data: {
+    leadName: string;
+    businessInfo?: string;
+    outcomeTag: OutcomeTag | string;
+    rawNotes: string;
+    previousContext?: string;
+  }): Promise<{ enhanced: EnhancedCallNotes }> {
+    return request('/api/ai/enhance-call-notes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async composeFollowUp(data: {
+    leadName: string;
+    businessInfo?: string;
+    outcomeTag: OutcomeTag | string;
+    callNotes?: string;
+    tone?: FollowUpTone;
+    agentName?: string;
+  }): Promise<{ messages: FollowUpComposerResult }> {
+    return request('/api/ai/compose-followup', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async getLeadHealth(params: {
+    leadId?: string;
+    lead?: Lead;
+    daysCold?: number;
+  }): Promise<{ health: LeadHealthAssessment }> {
+    return request('/api/ai/lead-health', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  // ----------------------------------------------------
+  // Admin Gemini Configuration
+  // ----------------------------------------------------
+  async getAdminGeminiConfig(): Promise<{ config: AdminGeminiConfig }> {
+    return request('/api/admin/gemini-config');
+  },
+
+  async updateAdminGeminiConfig(data: {
+    apiKey?: string;
+    model?: string;
+  }): Promise<{ config: AdminGeminiConfig; message: string }> {
+    return request('/api/admin/gemini-config', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async testAdminGeminiConfig(data: {
+    apiKey?: string;
+    model?: string;
+  }): Promise<{
+    success: boolean;
+    model: string;
+    message: string;
+    latencyMs: number;
+  }> {
+    return request('/api/admin/gemini-test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // ----------------------------------------------------
+  // Category 3: Manager Leaderboard & Activity Feed
+  // ----------------------------------------------------
+  async getLeaderboard(period: 'today' | 'week' | 'month' | 'all' = 'today'): Promise<LeaderboardStats> {
+    return request(`/api/manager/leaderboard?period=${period}`);
+  },
+
+  // ----------------------------------------------------
+  // Colleague Assistance Tickets (Lead Takeover)
+  // ----------------------------------------------------
+  async getAssistanceTickets(params?: {
+    scope?: 'incoming' | 'outgoing' | 'my' | 'all';
+    status?: 'pending' | 'accepted' | 'cancelled' | 'all';
+    leadId?: string;
+  }): Promise<{ success: boolean; tickets: AssistanceTicket[] }> {
+    const query = new URLSearchParams();
+    if (params?.scope) query.set('scope', params.scope);
+    if (params?.status) query.set('status', params.status);
+    if (params?.leadId) query.set('leadId', params.leadId);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return request(`/api/assistance-tickets${qs}`);
+  },
+
+  async createAssistanceTicket(data: {
+    leadId: string;
+    reason: AssistanceReason;
+    reasonLabel?: string;
+    notes: string;
+    targetAgentId?: string | null;
+    targetAgentName?: string | null;
+  }): Promise<{ success: boolean; ticket: AssistanceTicket }> {
+    return request('/api/assistance-tickets', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async acceptAssistanceTicket(ticketId: string): Promise<{
+    success: boolean;
+    ticket: AssistanceTicket;
+    lead: Lead;
+    message: string;
+  }> {
+    return request(`/api/assistance-tickets/${ticketId}/accept`, {
+      method: 'POST',
+    });
+  },
+
+  async cancelAssistanceTicket(ticketId: string): Promise<{
+    success: boolean;
+    ticket: AssistanceTicket;
+  }> {
+    return request(`/api/assistance-tickets/${ticketId}/cancel`, {
+      method: 'POST',
+    });
+  },
+
+  async getColleagues(): Promise<{ colleagues: User[]; teamMembers: User[] }> {
+    return request('/api/colleagues');
+  },
 };
+

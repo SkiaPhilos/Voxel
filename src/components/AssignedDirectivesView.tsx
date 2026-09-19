@@ -17,8 +17,16 @@ import {
   Check,
   ShieldCheck,
   UserCheck,
+  Ticket,
+  Handshake,
+  ArrowRight,
+  Layers,
+  Scale,
+  Briefcase,
+  Globe,
+  Loader2,
 } from 'lucide-react';
-import type { Lead, PinnedComment, PinnedCommentStatus, User } from '../types';
+import type { Lead, PinnedComment, PinnedCommentStatus, User, AssistanceTicket } from '../types';
 import { api } from '../lib/api';
 import { UserAvatar } from './UserAvatar';
 
@@ -29,6 +37,8 @@ interface AssignedDirectivesViewProps {
   onSelectLead?: (lead: Lead) => void;
   onOpenLeadDetail?: (lead: Lead) => void;
   onReviewAgent?: (agent: User) => void;
+  onLeadReassigned?: (lead: Lead) => void;
+  initialSubTab?: 'directives' | 'tickets';
 }
 
 function formatFriendlyTime(isoString?: string): string {
@@ -60,8 +70,17 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
   onSelectLead,
   onOpenLeadDetail,
   onReviewAgent,
+  onLeadReassigned,
+  initialSubTab = 'directives',
 }) => {
+  const [activeToggle, setActiveToggle] = useState<'directives' | 'tickets'>(initialSubTab);
   const [comments, setComments] = useState<PinnedComment[]>([]);
+  const [tickets, setTickets] = useState<AssistanceTicket[]>([]);
+  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
+  const [ticketFilter, setTicketFilter] = useState<'open' | 'all' | 'accepted_by_me'>('open');
+  const [ticketSearchQuery, setTicketSearchQuery] = useState('');
+  const [acceptingTicketId, setAcceptingTicketId] = useState<string | null>(null);
+
   const [userRoster, setUserRoster] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -243,6 +262,18 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
       const agentName = getResolvedAgentName(c);
       const author = getResolvedAuthor(c);
 
+      // If user is an agent, show only directives on their leads or assigned to them
+      if (currentUser.role === 'agent') {
+        const isMyDirective =
+          c.agent_id === currentUser.id ||
+          lead?.assigned_to === currentUser.id ||
+          lead?.assigned_to === currentUser.email ||
+          (agentName && agentName.toLowerCase() === currentUser.name.toLowerCase());
+        if (!isMyDirective) {
+          return false;
+        }
+      }
+
       // Status filter
       if (statusFilter !== 'all' && c.status !== statusFilter) {
         return false;
@@ -275,15 +306,94 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
       }
       return true;
     });
-  }, [comments, statusFilter, agentFilter, searchQuery, leadMap, getResolvedAgentName, getResolvedAuthor]);
+  }, [comments, statusFilter, agentFilter, searchQuery, leadMap, getResolvedAgentName, getResolvedAuthor, currentUser]);
+
+  // Ticket fetching and acceptance
+  const fetchTickets = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoadingTickets(true);
+    try {
+      const res = await api.getAssistanceTickets({ scope: 'all' });
+      setTickets(res.tickets || []);
+    } catch (err) {
+      console.error('Failed to load assistance tickets:', err);
+    } finally {
+      setIsLoadingTickets(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTickets();
+  }, [fetchTickets]);
+
+  const handleAcceptTicket = async (ticket: AssistanceTicket) => {
+    setAcceptingTicketId(ticket.id);
+    try {
+      const res = await api.acceptAssistanceTicket(ticket.id);
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticket.id ? res.ticket : t))
+      );
+      showFeedback(`Lead ${res.lead.name} successfully taken over! Assigned to you.`);
+      if (onLeadReassigned) {
+        onLeadReassigned(res.lead);
+      }
+    } catch (err: any) {
+      console.error('Failed to accept assistance ticket:', err);
+      showFeedback(err?.message || 'Failed to accept takeover ticket');
+    } finally {
+      setAcceptingTicketId(null);
+    }
+  };
+
+  // Filtered tickets
+  const filteredTickets = useMemo(() => {
+    return tickets.filter((t) => {
+      // If targeted to a specific colleague, only show if target matches current user
+      if (t.target_agent_id && t.target_agent_id !== currentUser.id && t.target_agent_id !== currentUser.email) {
+        return false;
+      }
+
+      if (ticketFilter === 'open') {
+        if (t.status !== 'pending') return false;
+        // Don't show current user's own outgoing tickets here (they are under Ask Assistance)
+        if (t.requested_by_id === currentUser.id) return false;
+      } else if (ticketFilter === 'accepted_by_me') {
+        if (t.status !== 'accepted' || t.accepted_by_id !== currentUser.id) return false;
+      }
+
+      if (ticketSearchQuery.trim()) {
+        const q = ticketSearchQuery.toLowerCase();
+        const matchLead = (t.lead_name || '').toLowerCase().includes(q);
+        const matchPhone = (t.lead_phone || '').toLowerCase().includes(q);
+        const matchCompany = (t.lead_company || '').toLowerCase().includes(q);
+        const matchRequester = (t.requested_by_name || '').toLowerCase().includes(q);
+        const matchReason = (t.reason_label || '').toLowerCase().includes(q);
+        const matchNotes = (t.notes || '').toLowerCase().includes(q);
+        if (!matchLead && !matchPhone && !matchCompany && !matchRequester && !matchReason && !matchNotes) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [tickets, ticketFilter, ticketSearchQuery, currentUser]);
 
   // Metrics
-  const totalCount = comments.length;
-  const doneCount = comments.filter((c) => c.status === 'done').length;
-  const ackCount = comments.filter((c) => c.status === 'acknowledged').length;
-  const unackCount = comments.filter((c) => c.status === 'unacknowledged').length;
+  const totalCount = filteredComments.length;
+  const doneCount = filteredComments.filter((c) => c.status === 'done').length;
+  const ackCount = filteredComments.filter((c) => c.status === 'acknowledged').length;
+  const unackCount = filteredComments.filter((c) => c.status === 'unacknowledged').length;
   const notDoneCount = totalCount - doneCount;
   const completionRate = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  const openTicketsCount = tickets.filter(
+    (t) =>
+      t.status === 'pending' &&
+      t.requested_by_id !== currentUser.id &&
+      (!t.target_agent_id || t.target_agent_id === currentUser.id || t.target_agent_id === currentUser.email)
+  ).length;
+
+  const acceptedByMeCount = tickets.filter(
+    (t) => t.status === 'accepted' && t.accepted_by_id === currentUser.id
+  ).length;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -295,6 +405,64 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
         </div>
       )}
 
+      {/* Top Toggle Switcher: Directives vs Tickets */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center bg-[#FAF8F5] p-1.5 rounded-2xl border border-stone-200/90 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setActiveToggle('directives')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeToggle === 'directives'
+                ? 'bg-white text-stone-900 shadow-xs border border-stone-200/70 font-black'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Pin className={`w-3.5 h-3.5 ${activeToggle === 'directives' ? 'text-amber-700 fill-amber-700' : 'text-stone-400'}`} />
+            <span>Directives</span>
+            {notDoneCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                {notDoneCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveToggle('tickets')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeToggle === 'tickets'
+                ? 'bg-white text-stone-900 shadow-xs border border-stone-200/70 font-black'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Ticket className={`w-3.5 h-3.5 ${activeToggle === 'tickets' ? 'text-amber-700' : 'text-stone-400'}`} />
+            <span>Tickets</span>
+            {openTicketsCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-amber-950 animate-pulse">
+                {openTicketsCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (activeToggle === 'directives') fetchDirectives(true);
+            else fetchTickets(true);
+          }}
+          disabled={isRefreshing || isLoading || isLoadingTickets}
+          className="p-2.5 px-3.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-xs font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+          title="Refresh"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing || isLoadingTickets ? 'animate-spin text-amber-700' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
+      </div>
+
+      {/* TOGGLE 1: DIRECTIVES */}
+      {activeToggle === 'directives' && (
+        <div className="space-y-6">
       {/* Header Banner */}
       <div className="bg-white rounded-2xl border border-stone-200/90 p-5 sm:p-6 shadow-2xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -822,6 +990,310 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+        </div>
+      )}
+
+      {/* TOGGLE 2: TICKETS (COLLEAGUE ASSISTANCE REQUESTS) */}
+      {activeToggle === 'tickets' && (
+        <div className="space-y-6">
+          {/* Tickets Header Banner */}
+          <div className="bg-white rounded-2xl border border-stone-200/90 p-5 sm:p-6 shadow-2xs">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-700 text-white flex items-center justify-center shadow-xs">
+                    <Ticket className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h1 className="text-lg sm:text-xl font-bold text-stone-900 flex items-center gap-2">
+                      <span>Colleague Assistance Requests</span>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                        {openTicketsCount} Open for Takeover
+                      </span>
+                    </h1>
+                    <p className="text-xs text-stone-500">
+                      Requests from fellow agents needing someone to take over outreach due to workload or fit. Accepting a ticket reassigns the lead directly to you.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI Metrics Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-6 pt-5 border-t border-stone-100">
+              <div className="p-3.5 rounded-xl bg-[#FAF8F5] border border-stone-200/80 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500">Open for Takeover</span>
+                  <Ticket className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="text-2xl font-black text-amber-900">{openTicketsCount}</div>
+                <p className="text-[11px] text-stone-400">Available to accept now</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#FAF8F5] border border-stone-200/80 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500">Taken Over by You</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="text-2xl font-black text-emerald-800">{acceptedByMeCount}</div>
+                <p className="text-[11px] text-stone-400">Leads transferred to your pipeline</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#FAF8F5] border border-stone-200/80 space-y-1 col-span-2 sm:col-span-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500">Total Team Tickets</span>
+                  <Handshake className="w-4 h-4 text-stone-600" />
+                </div>
+                <div className="text-2xl font-black text-stone-900">{tickets.length}</div>
+                <p className="text-[11px] text-stone-400">All colleague assistance requests</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Ticket Filter and Search Bar */}
+          <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-2xs space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              {/* Filter Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setTicketFilter('open')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    ticketFilter === 'open'
+                      ? 'bg-amber-700 text-white shadow-2xs font-bold'
+                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70'
+                  }`}
+                >
+                  <Ticket className="w-3.5 h-3.5" />
+                  <span>Open for Takeover ({openTicketsCount})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTicketFilter('accepted_by_me')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    ticketFilter === 'accepted_by_me'
+                      ? 'bg-emerald-700 text-white shadow-2xs font-bold'
+                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Taken Over by Me ({acceptedByMeCount})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTicketFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                    ticketFilter === 'all'
+                      ? 'bg-stone-800 text-white shadow-2xs font-bold'
+                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70'
+                  }`}
+                >
+                  All Tickets ({tickets.length})
+                </button>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative w-full md:w-72">
+                <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search requests, leads, notes..."
+                  value={ticketSearchQuery}
+                  onChange={(e) => setTicketSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-1.5 rounded-xl border border-stone-200 bg-[#FAF8F5] text-xs text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-700/20 focus:border-amber-700"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Tickets Cards Grid */}
+          {isLoadingTickets ? (
+            <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center space-y-3">
+              <Loader2 className="w-8 h-8 text-amber-700 animate-spin mx-auto" />
+              <p className="text-xs font-bold text-stone-600">Loading colleague assistance tickets...</p>
+            </div>
+          ) : filteredTickets.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-stone-200 p-12 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center mx-auto">
+                <Handshake className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-stone-900">No colleague requests found</h3>
+                <p className="text-xs text-stone-500 max-w-sm mx-auto mt-1">
+                  {ticketSearchQuery || ticketFilter !== 'open'
+                    ? 'Try clearing your filters or search query.'
+                    : 'No fellow agents currently have open takeover requests. When an agent requests assistance with a lead, it will appear here.'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredTickets.map((t) => {
+                const matchedLead = leadMap.get(t.lead_id);
+                const isPending = t.status === 'pending';
+                const isAcceptedByMe = t.status === 'accepted' && t.accepted_by_id === currentUser.id;
+                const isAccepting = acceptingTicketId === t.id;
+
+                return (
+                  <div
+                    key={t.id}
+                    className={`bg-white rounded-2xl border transition-all duration-200 shadow-2xs hover:shadow-xs flex flex-col justify-between overflow-hidden p-5 space-y-4 ${
+                      isPending
+                        ? 'border-amber-300 bg-amber-50/10'
+                        : isAcceptedByMe
+                        ? 'border-emerald-200 bg-emerald-50/10'
+                        : 'border-stone-200'
+                    }`}
+                  >
+                    {/* Header */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <UserAvatar
+                          name={t.requested_by_name}
+                          avatarUrl={t.requested_by_avatar_url}
+                          size="md"
+                        />
+                        <div>
+                          <div className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
+                            <span>{t.requested_by_name}</span>
+                            <span className="text-[10px] text-stone-400 font-normal">&bull; {formatFriendlyTime(t.created_at)}</span>
+                          </div>
+                          <div className="text-[11px] text-stone-500 font-medium">
+                            Requesting Lead Takeover
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Status Pill */}
+                      {isPending ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                          <Ticket className="w-3 h-3 text-amber-700" />
+                          Open for Takeover
+                        </span>
+                      ) : t.status === 'accepted' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                          Taken Over
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
+                          Withdrawn
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Reason Tag */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-stone-100 text-stone-800 border border-stone-200/80">
+                        <span>Reason:</span>
+                        <strong className="text-amber-900">{t.reason_label || t.reason}</strong>
+                      </span>
+                      {t.target_agent_name && (
+                        <span className="text-[11px] font-semibold text-stone-500">
+                          Targeted for: {t.target_agent_name}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Lead Preview Box */}
+                    <div className="p-3 bg-[#FAF8F5] rounded-xl border border-stone-200/80 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-black text-stone-900 flex items-center gap-1.5">
+                          <span>{t.lead_name}</span>
+                          {t.lead_company && (
+                            <span className="text-[11px] font-normal text-stone-500">({t.lead_company})</span>
+                          )}
+                        </div>
+                        {t.lead_priority && (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            t.lead_priority === 'urgent'
+                              ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                              : t.lead_priority === 'high'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : 'bg-stone-200 text-stone-700'
+                          }`}>
+                            {t.lead_priority}
+                          </span>
+                        )}
+                      </div>
+                      {t.lead_phone && (
+                        <div className="text-[11px] text-stone-600 flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-stone-400" />
+                          <span>{t.lead_phone}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Handover Notes Box */}
+                    {t.notes && (
+                      <div className="p-3 rounded-xl bg-amber-50/40 border border-amber-200/70 text-xs text-stone-700 space-y-1">
+                        <div className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
+                          <MessageSquareQuote className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Handover Notes from Colleague:</span>
+                        </div>
+                        <p className="italic text-stone-800 leading-relaxed">&ldquo;{t.notes}&rdquo;</p>
+                      </div>
+                    )}
+
+                    {/* Action Bar */}
+                    <div className="pt-2 border-t border-stone-100 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {isPending && t.requested_by_id !== currentUser.id && (
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptTicket(t)}
+                            disabled={isAccepting}
+                            className="px-3.5 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 active:scale-98 text-white text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {isAccepting ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Reassigning...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Handshake className="w-4 h-4" />
+                                <span>Accept &amp; Take Over Lead</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {isAcceptedByMe && (
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Reassigned to You</span>
+                          </div>
+                        )}
+
+                        {!isPending && !isAcceptedByMe && (
+                          <div className="text-xs font-semibold text-stone-500">
+                            {t.status === 'accepted' ? `Taken over by ${t.accepted_by_name}` : 'Request closed'}
+                          </div>
+                        )}
+                      </div>
+
+                      {matchedLead ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onOpenLeadDetail) onOpenLeadDetail(matchedLead);
+                            else if (onSelectLead) onSelectLead(matchedLead);
+                          }}
+                          className="px-3 py-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-xl text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <span>Open Lead</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

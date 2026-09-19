@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   Menu,
   Users,
+  FileSpreadsheet,
 } from 'lucide-react';
 import type { Lead, User, OutcomeTag, Priority, PinnedComment } from './types';
 import { api, setStoredToken } from './lib/api';
@@ -36,7 +37,12 @@ import { PotentialCustomersView } from './components/PotentialCustomersView';
 import { ManagerDashboardView } from './components/ManagerDashboardView';
 import { NewsletterView } from './components/NewsletterView';
 import { ReassignLeadModal } from './components/ReassignLeadModal';
+import { CsvImportWizardModal } from './components/CsvImportWizardModal';
+import { PowerDialerModal } from './components/PowerDialerModal';
 import { StickyDirectiveFloatingLayer } from './components/StickyDirectiveIndicator';
+import { AssignedDirectivesView } from './components/AssignedDirectivesView';
+import { AskAssistanceView } from './components/AskAssistanceView';
+import { AskAssistanceModal } from './components/AskAssistanceModal';
 import { isDueNowOrOverdue, isStaleLead } from './lib/dateUtils';
 import { getExistingSubscription } from './lib/pushManager';
 
@@ -80,10 +86,22 @@ export default function App() {
   const [selectedDetailLead, setSelectedDetailLead] = useState<Lead | null>(null);
   const [leadToReassign, setLeadToReassign] = useState<Lead | null>(null);
   const [isReassignModalOpen, setIsReassignModalOpen] = useState(false);
+  const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<User[]>([]);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isPushModalOpen, setIsPushModalOpen] = useState(false);
   const [isPushActive, setIsPushActive] = useState(false);
+
+  // Assistance Tickets state
+  const [pendingTicketsCount, setPendingTicketsCount] = useState<number>(0);
+  const [isAskAssistanceModalOpen, setIsAskAssistanceModalOpen] = useState(false);
+  const [assistanceModalLead, setAssistanceModalLead] = useState<Lead | null>(null);
+
+  // Power Dialer state
+  const [isPowerDialerOpen, setIsPowerDialerOpen] = useState(false);
+  const [powerDialerQueue, setPowerDialerQueue] = useState<Lead[]>([]);
+  const [powerDialerTitle, setPowerDialerTitle] = useState('Calling Queue');
 
   // Browser Notification state
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
@@ -153,6 +171,21 @@ export default function App() {
     }
   }, [currentUser]);
 
+  const fetchPendingTickets = useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const res = await api.getAssistanceTickets({ status: 'pending', scope: 'all' });
+      const count = (res.tickets || []).filter(
+        (t) =>
+          t.requested_by_id !== currentUser.id &&
+          (!t.target_agent_id || t.target_agent_id === currentUser.id || t.target_agent_id === currentUser.email)
+      ).length;
+      setPendingTicketsCount(count);
+    } catch {
+      setPendingTicketsCount(0);
+    }
+  }, [currentUser]);
+
   const handleCommentStatusUpdated = (commentId: string, newStatus: 'acknowledged' | 'done') => {
     setPinnedComments((prev) =>
       prev.map((c) => (c.id === commentId ? { ...c, status: newStatus } : c))
@@ -163,11 +196,28 @@ export default function App() {
     if (currentUser) {
       fetchLeads();
       fetchPinnedComments();
+      fetchPendingTickets();
       api.getPotentialCustomers()
         .then((res) => setPotentialCustomersCount(res.customers?.length || 0))
         .catch(() => {});
+
+      api.getColleagues()
+        .then((res) => {
+          if (res.colleagues && res.colleagues.length > 0) {
+            setTeamMembers(res.colleagues);
+          }
+        })
+        .catch(() => {
+          if (currentUser.role === 'admin' || currentUser.role === 'manager') {
+            api.getManagerTeam()
+              .then((res) => setTeamMembers(res.teamMembers || res.team || []))
+              .catch(() => setTeamMembers([currentUser]));
+          } else {
+            setTeamMembers([currentUser]);
+          }
+        });
     }
-  }, [currentUser, fetchLeads, fetchPinnedComments]);
+  }, [currentUser, fetchLeads, fetchPinnedComments, fetchPendingTickets]);
 
   // Request browser notification permission
   const [alertFeedbackMsg, setAlertFeedbackMsg] = useState<string | null>(null);
@@ -278,6 +328,9 @@ export default function App() {
     next_action_at?: string | null;
     business_info?: string;
     priority?: Priority;
+    audio_url?: string | null;
+    audio_duration?: number | null;
+    audio_name?: string | null;
   }) => {
     if (!activeCallModalLead) return;
     const targetId = activeCallModalLead.id;
@@ -292,6 +345,9 @@ export default function App() {
       outcome_tag: callData.outcome_tag,
       business_info: callData.business_info,
       logged_by: currentUser?.email,
+      audio_url: callData.audio_url || undefined,
+      audio_duration: callData.audio_duration || undefined,
+      audio_name: callData.audio_name || undefined,
     };
 
     let newStatus = activeCallModalLead.status;
@@ -354,6 +410,108 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to save call', err);
+      fetchLeads();
+      throw err;
+    }
+  };
+
+  // Launch Power Dialer rapid calling session
+  const handleStartPowerDialer = (leadsToCall: Lead[], title: string = 'Calling Queue') => {
+    if (!leadsToCall || leadsToCall.length === 0) return;
+    setPowerDialerQueue(leadsToCall);
+    setPowerDialerTitle(title);
+    setIsPowerDialerOpen(true);
+  };
+
+  // Dedicated call logger for Power Dialer session
+  const handleSaveCallFromDialer = async (
+    targetId: string,
+    callData: {
+      outcome_tag: OutcomeTag;
+      summary: string;
+      full_notes: string;
+      next_action_at?: string | null;
+      business_info?: string;
+      priority?: Priority;
+      audio_url?: string | null;
+      audio_duration?: number | null;
+      audio_name?: string | null;
+    }
+  ) => {
+    const targetLead = leads.find((l) => l.id === targetId);
+    const nowIso = new Date().toISOString();
+
+    const optimisticLog = {
+      id: 'call_opt_' + Date.now(),
+      timestamp: nowIso,
+      summary: callData.summary,
+      full_notes: callData.full_notes,
+      outcome_tag: callData.outcome_tag,
+      business_info: callData.business_info,
+      logged_by: currentUser?.email,
+      audio_url: callData.audio_url || undefined,
+      audio_duration: callData.audio_duration || undefined,
+      audio_name: callData.audio_name || undefined,
+    };
+
+    let newStatus = targetLead ? targetLead.status : 'Follow-up Scheduled';
+    let newArchivedAt = targetLead ? targetLead.archived_at : undefined;
+    let newNextAction = callData.next_action_at;
+
+    if (callData.outcome_tag === 'Closed/Matured') {
+      newStatus = 'Matured (Closed)';
+      newNextAction = null;
+    } else if (callData.outcome_tag === 'Service Denied') {
+      newStatus = 'Service Denied';
+      newNextAction = null;
+      newArchivedAt = nowIso;
+    } else if (callData.next_action_at) {
+      newStatus = 'Follow-up Scheduled';
+    }
+
+    setLeads((prev) =>
+      prev.map((l) => {
+        if (l.id !== targetId) return l;
+        return {
+          ...l,
+          status: newStatus,
+          priority: callData.priority || l.priority,
+          next_action_at: newNextAction || null,
+          archived_at: newArchivedAt,
+          updated_at: nowIso,
+          call_logs: [optimisticLog, ...l.call_logs],
+        };
+      })
+    );
+
+    if (selectedDetailLead?.id === targetId) {
+      setSelectedDetailLead((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: newStatus,
+              priority: callData.priority || prev.priority,
+              next_action_at: newNextAction || null,
+              archived_at: newArchivedAt,
+              updated_at: nowIso,
+              call_logs: [optimisticLog, ...prev.call_logs],
+            }
+          : null
+      );
+    }
+
+    if (dueAlertLead?.id === targetId) {
+      setDueAlertLead(null);
+    }
+
+    try {
+      const res = await api.logCall(targetId, callData);
+      setLeads((prev) => prev.map((l) => (l.id === targetId ? res.lead : l)));
+      if (selectedDetailLead?.id === targetId) {
+        setSelectedDetailLead(res.lead);
+      }
+    } catch (err) {
+      console.error('Failed to log call in dialer', err);
       fetchLeads();
       throw err;
     }
@@ -512,6 +670,7 @@ export default function App() {
             potentialCustomersCount={potentialCustomersCount}
             dueNowCount={dueNowLeads.length}
             pendingDirectivesCount={pinnedComments.filter((c) => c.status !== 'done').length}
+            pendingTicketsCount={pendingTicketsCount}
             user={currentUser}
             onOpenProfile={() => setIsProfileModalOpen(true)}
             onOpenAdminSettings={() => setIsAdminModalOpen(true)}
@@ -551,7 +710,8 @@ export default function App() {
                       {currentView === 'archive' && 'Archived & Denied Leads'}
                       {currentView === 'potential-customers' && 'Potential Customers Directory'}
                       {currentView === 'manager' && 'Group Manager Oversight & Command'}
-                      {currentView === 'directives' && 'Assigned Directives & Tasks Ledger'}
+                      {currentView === 'directives' && 'Tickets & Directives Ledger'}
+                      {currentView === 'ask-assistance' && 'Request Help & Assistance'}
                       {currentView === 'newsletter' && 'Newsletter & Email Dispatch'}
                     </h1>
                     {currentView === 'active' && dueNowLeads.length > 0 && (
@@ -568,7 +728,8 @@ export default function App() {
                     {currentView === 'archive' && `${archivedLeads.length} leads removed from active pipeline`}
                     {currentView === 'potential-customers' && `${potentialCustomersCount} prospect inquiries & product interests recorded`}
                     {currentView === 'manager' && 'Supervision, integrity metrics, lead reassignment & team directives'}
-                    {currentView === 'directives' && 'Track directives you wrote on leads and check agent completion status'}
+                    {currentView === 'directives' && 'Directives on leads and takeover tickets from fellow agents'}
+                    {currentView === 'ask-assistance' && 'Request a colleague to take over a lead or assist with outreach'}
                     {currentView === 'newsletter' && 'Email campaigns powered by Resend API integration'}
                   </p>
                 </div>
@@ -604,6 +765,34 @@ export default function App() {
                     <span className="sm:hidden">Push Alerts</span>
                   </button>
                 )}
+
+                {/* Power Dialer Header Quick Trigger */}
+                <button
+                  id="header-power-dialer-btn"
+                  onClick={() =>
+                    handleStartPowerDialer(
+                      dueNowLeads.length > 0 ? dueNowLeads : filteredActiveLeads,
+                      dueNowLeads.length > 0 ? 'Due Today Calling Session' : 'Active Pipeline Calling Session'
+                    )
+                  }
+                  disabled={filteredActiveLeads.length === 0 && dueNowLeads.length === 0}
+                  title="Launch rapid continuous calling mode"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <PhoneCall className="w-3.5 h-3.5 text-amber-700 animate-pulse" />
+                  <span>Power Dialer</span>
+                </button>
+
+                {/* Import CSV Button */}
+                <button
+                  id="header-import-csv-btn"
+                  onClick={() => setIsCsvImportModalOpen(true)}
+                  title="Bulk import leads from CSV spreadsheet"
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 active:bg-stone-100 text-stone-700 text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Import CSV</span>
+                </button>
 
                 {/* Prominent + New Lead Button */}
                 <button
@@ -663,6 +852,7 @@ export default function App() {
                   leads={dueNowLeads}
                   onLogCall={(lead) => setActiveCallModalLead(lead)}
                   onOpenDetail={(lead) => setSelectedDetailLead(lead)}
+                  onStartPowerDialer={(leads) => handleStartPowerDialer(leads, 'Due Today Calling Session')}
                 />
 
                 {/* 2. STALE — CHECK BACK IN REMINDER SECTION */}
@@ -670,6 +860,7 @@ export default function App() {
                   leads={staleLeads}
                   onLogCall={(lead) => setActiveCallModalLead(lead)}
                   onOpenDetail={(lead) => setSelectedDetailLead(lead)}
+                  onStartPowerDialer={(leads) => handleStartPowerDialer(leads, 'Stale Leads Follow-Up')}
                 />
 
                 {/* 3. ACTIVE LEADS PIPELINE HEADER & CONTROLS */}
@@ -685,6 +876,18 @@ export default function App() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {/* Power Dialer Start Button */}
+                      <button
+                        id="start-pipeline-power-dialer-btn"
+                        onClick={() => handleStartPowerDialer(filteredActiveLeads, 'Active Pipeline Calling Session')}
+                        disabled={filteredActiveLeads.length === 0}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                        title="Launch continuous rapid calling mode for this list"
+                      >
+                        <PhoneCall className="w-3.5 h-3.5 animate-pulse" />
+                        <span>Power Dialer ({filteredActiveLeads.length})</span>
+                      </button>
+
                       {/* Priority toggle button */}
                       <button
                         id="filter-priority-btn"
@@ -772,6 +975,10 @@ export default function App() {
                         onLogCall={(l) => setActiveCallModalLead(l)}
                         onOpenDetail={(l) => setSelectedDetailLead(l)}
                         onTogglePriority={(l) => handleTogglePriority(l)}
+                        onRequestAssistance={(l) => {
+                          setAssistanceModalLead(l);
+                          setIsAskAssistanceModalOpen(true);
+                        }}
                       />
                     ))}
                   </div>
@@ -797,6 +1004,11 @@ export default function App() {
                   onOpenDetail={(lead) => setSelectedDetailLead(lead)}
                   onTogglePriority={(lead) => handleTogglePriority(lead)}
                   onOpenNewLeadModal={() => setIsNewLeadModalOpen(true)}
+                  onOpenCsvImportModal={() => setIsCsvImportModalOpen(true)}
+                  onRequestAssistance={(l) => {
+                    setAssistanceModalLead(l);
+                    setIsAskAssistanceModalOpen(true);
+                  }}
                 />
               )}
 
@@ -828,12 +1040,12 @@ export default function App() {
                 />
               )}
 
-              {/* VIEW 6: GROUP MANAGER DASHBOARD & ASSIGNED DIRECTIVES */}
-              {(currentView === 'manager' || currentView === 'directives') && (currentUser.role === 'manager' || currentUser.role === 'admin') && (
+              {/* VIEW 6: GROUP MANAGER DASHBOARD (FOR MANAGERS & ADMINS) */}
+              {currentView === 'manager' && (currentUser.role === 'manager' || currentUser.role === 'admin') && (
                 <ManagerDashboardView
                   currentUser={currentUser}
                   leads={leads}
-                  initialTab={currentView === 'directives' ? 'directives' : 'team'}
+                  initialTab="team"
                   onLeadUpdated={(updatedLead) => {
                     setLeads((prev) => prev.map((l) => (l.id === updatedLead.id ? updatedLead : l)));
                     if (selectedDetailLead?.id === updatedLead.id) {
@@ -844,6 +1056,46 @@ export default function App() {
                   onOpenLeadDetail={(lead) => setSelectedDetailLead(lead)}
                   onLogCall={(lead) => setActiveCallModalLead(lead)}
                   onTogglePriority={handleTogglePriority}
+                />
+              )}
+
+              {/* VIEW 6B: TICKETS & DIRECTIVES HUB (FOR ALL AGENTS, MANAGERS, ADMINS) */}
+              {currentView === 'directives' && (
+                <AssignedDirectivesView
+                  currentUser={currentUser}
+                  leads={leads}
+                  teamMembers={teamMembers}
+                  onSelectLead={(lead) => setSelectedDetailLead(lead)}
+                  onOpenLeadDetail={(lead) => setSelectedDetailLead(lead)}
+                  onLeadReassigned={(reassignedLead) => {
+                    setLeads((prev) =>
+                      prev.map((l) => (l.id === reassignedLead.id ? reassignedLead : l))
+                    );
+                    if (selectedDetailLead?.id === reassignedLead.id) {
+                      setSelectedDetailLead(reassignedLead);
+                    }
+                    fetchPendingTickets();
+                  }}
+                />
+              )}
+
+              {/* VIEW 6C: ASK ASSISTANCE / ISSUE TAKEOVER TICKETS */}
+              {currentView === 'ask-assistance' && (
+                <AskAssistanceView
+                  currentUser={currentUser}
+                  leads={leads}
+                  teamMembers={teamMembers}
+                  onOpenNewTicketModal={(preselectedLead) => {
+                    setAssistanceModalLead(preselectedLead || null);
+                    setIsAskAssistanceModalOpen(true);
+                  }}
+                  onLeadUpdated={(updatedLead) => {
+                    setLeads((prev) => prev.map((l) => (l.id === updatedLead.id ? updatedLead : l)));
+                    if (selectedDetailLead?.id === updatedLead.id) {
+                      setSelectedDetailLead(updatedLead);
+                    }
+                  }}
+                  onOpenLeadDetail={(lead) => setSelectedDetailLead(lead)}
                 />
               )}
 
@@ -978,6 +1230,26 @@ export default function App() {
           setLeadToReassign(lead);
           setIsReassignModalOpen(true);
         }}
+        onRequestAssistance={(lead) => {
+          setAssistanceModalLead(lead);
+          setIsAskAssistanceModalOpen(true);
+        }}
+      />
+
+      {/* ASK ASSISTANCE / REQUEST TAKEOVER MODAL */}
+      <AskAssistanceModal
+        isOpen={isAskAssistanceModalOpen}
+        onClose={() => {
+          setIsAskAssistanceModalOpen(false);
+          setAssistanceModalLead(null);
+        }}
+        currentUser={currentUser}
+        initialLead={assistanceModalLead}
+        availableLeads={leads}
+        teamMembers={teamMembers}
+        onTicketCreated={() => {
+          fetchPendingTickets();
+        }}
       />
 
       {/* REASSIGN LEAD MODAL (Available throughout app for Managers & Admins) */}
@@ -1005,6 +1277,31 @@ export default function App() {
         onClose={() => setIsPushModalOpen(false)}
         onSubscribedChange={(active) => setIsPushActive(active)}
       />
+
+      {/* CSV SPREADSHEET IMPORT & DEDUPLICATION WIZARD */}
+      <CsvImportWizardModal
+        isOpen={isCsvImportModalOpen}
+        onClose={() => setIsCsvImportModalOpen(false)}
+        currentUser={currentUser}
+        teamMembers={teamMembers}
+        onImportComplete={() => {
+          fetchLeads();
+        }}
+      />
+
+      {/* POWER DIALER RAPID CALLING HUD */}
+      {isPowerDialerOpen && powerDialerQueue.length > 0 && (
+        <PowerDialerModal
+          isOpen={isPowerDialerOpen}
+          queue={powerDialerQueue}
+          queueTitle={powerDialerTitle}
+          onClose={() => {
+            setIsPowerDialerOpen(false);
+            setPowerDialerQueue([]);
+          }}
+          onSaveCall={handleSaveCallFromDialer}
+        />
+      )}
     </div>
   );
 }

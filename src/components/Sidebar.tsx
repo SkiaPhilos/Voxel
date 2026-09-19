@@ -18,6 +18,8 @@ import {
   ShieldAlert,
   Mail,
   X,
+  Handshake,
+  Ticket,
 } from 'lucide-react';
 import type { User } from '../types';
 import { UserAvatar } from './UserAvatar';
@@ -25,11 +27,12 @@ import { UserAvatar } from './UserAvatar';
 export type AppView =
   | 'active'
   | 'all-leads'
+  | 'directives'
+  | 'ask-assistance'
   | 'closed'
   | 'archive'
   | 'potential-customers'
   | 'manager'
-  | 'directives'
   | 'newsletter';
 
 interface SidebarProps {
@@ -42,6 +45,7 @@ interface SidebarProps {
   potentialCustomersCount?: number;
   dueNowCount: number;
   pendingDirectivesCount?: number;
+  pendingTicketsCount?: number;
   user: User;
   onOpenProfile: () => void;
   onOpenAdminSettings: () => void;
@@ -63,6 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   potentialCustomersCount,
   dueNowCount,
   pendingDirectivesCount,
+  pendingTicketsCount,
   user,
   onOpenProfile,
   onOpenAdminSettings,
@@ -96,6 +101,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Expanded if pinned OR hovered
   const isExpanded = isPinned || isHovered;
 
+  const totalTicketsAndDirectives = (pendingDirectivesCount ?? 0) + (pendingTicketsCount ?? 0);
+
   const navItems = [
     {
       id: 'active' as const,
@@ -110,6 +117,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'All Leads',
       icon: Layers,
       count: allLeadsCount,
+      hasPulse: false,
+      badgeColor: 'bg-stone-200 text-stone-700',
+    },
+    {
+      id: 'directives' as const,
+      label: 'Tickets & Directives',
+      icon: Pin,
+      count: totalTicketsAndDirectives,
+      hasPulse: totalTicketsAndDirectives > 0,
+      badgeColor: totalTicketsAndDirectives > 0 ? 'bg-amber-500 text-amber-950 font-bold' : 'bg-stone-200 text-stone-700',
+    },
+    {
+      id: 'ask-assistance' as const,
+      label: 'Ask Assistance',
+      icon: Handshake,
+      count: undefined,
       hasPulse: false,
       badgeColor: 'bg-stone-200 text-stone-700',
     },
@@ -146,14 +169,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             count: undefined,
             hasPulse: false,
             badgeColor: 'bg-amber-700 text-white',
-          },
-          {
-            id: 'directives' as const,
-            label: 'Directives Tasks',
-            icon: Pin,
-            count: pendingDirectivesCount,
-            hasPulse: (pendingDirectivesCount ?? 0) > 0,
-            badgeColor: (pendingDirectivesCount ?? 0) > 0 ? 'bg-amber-500 text-amber-950 font-bold' : 'bg-stone-200 text-stone-700',
           },
           {
             id: 'newsletter' as const,

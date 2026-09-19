@@ -20,11 +20,17 @@ import {
   Pin,
   ArrowRightLeft,
   AlertCircle,
+  Sparkles,
+  MessageSquareText,
+  Handshake,
 } from 'lucide-react';
 import type { Lead, OutcomeTag, Priority, User as UserType, PinnedComment } from '../types';
 import { formatFriendlyTime } from '../lib/dateUtils';
 import { saveLeadToContacts, formatPhoneForDialer } from '../lib/contactUtils';
 import { UserAvatar } from './UserAvatar';
+import { LeadHealthBadge } from './LeadHealthBadge';
+import { SmartFollowUpModal } from './SmartFollowUpModal';
+import { AudioPlayer } from './AudioPlayer';
 import { api } from '../lib/api';
 
 interface LeadDetailDrawerProps {
@@ -36,6 +42,7 @@ interface LeadDetailDrawerProps {
   onArchiveLead: (id: string, archive: boolean, reason?: string) => Promise<void>;
   currentUser?: UserType | null;
   onOpenReassign?: (lead: Lead) => void;
+  onRequestAssistance?: (lead: Lead) => void;
 }
 
 export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
@@ -47,6 +54,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   onArchiveLead,
   currentUser,
   onOpenReassign,
+  onRequestAssistance,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -64,6 +72,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const [isAddingPin, setIsAddingPin] = useState(false);
   const [newPinText, setNewPinText] = useState('');
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
+  const [isSmartFollowUpOpen, setIsSmartFollowUpOpen] = useState(false);
 
   useEffect(() => {
     if (lead?.id && isOpen) {
@@ -172,9 +181,10 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const isArchived = lead.status === 'Service Denied' || lead.status === 'Archived';
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-stone-900/40 backdrop-blur-xs">
-      <div className="w-full max-w-2xl h-full bg-[#FAF8F5] border-l border-stone-200 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
-        {/* Top bar */}
+    <>
+      <div className="fixed inset-0 z-50 flex justify-end bg-stone-900/40 backdrop-blur-xs">
+        <div className="w-full max-w-2xl h-full bg-[#FAF8F5] border-l border-stone-200 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+          {/* Top bar */}
         <div className="p-4 sm:p-5 border-b border-stone-200 bg-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xs uppercase tracking-wider font-semibold text-stone-500">
@@ -183,6 +193,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             <span className="text-xs px-2 py-0.5 rounded-md bg-stone-100 text-stone-700 font-medium">
               {lead.status}
             </span>
+            <LeadHealthBadge lead={lead} size="md" onLeadUpdated={(updated) => onUpdateLead(lead.id, updated)} />
             {lead.priority === 'High' && (
               <span className="text-xs px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold flex items-center gap-0.5">
                 <Flame className="w-3 h-3 text-amber-600" />
@@ -233,6 +244,16 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                       >
                         <ArrowRightLeft className="w-3.5 h-3.5" />
                         <span>Reassign</span>
+                      </button>
+                    )}
+                    {onRequestAssistance && (
+                      <button
+                        onClick={() => onRequestAssistance(lead)}
+                        className="p-2 rounded-lg text-amber-900 bg-amber-100/70 hover:bg-amber-100 text-xs font-semibold flex items-center gap-1 border border-amber-300 transition-colors cursor-pointer"
+                        title="Request a fellow agent to take over this lead"
+                      >
+                        <Handshake className="w-3.5 h-3.5 text-amber-700" />
+                        <span className="hidden sm:inline">Ask Takeover</span>
                       </button>
                     )}
                     <button
@@ -390,6 +411,16 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                 <MessageSquare className="w-3.5 h-3.5 text-stone-500" />
                 <span>SMS</span>
               </a>
+
+              <button
+                type="button"
+                onClick={() => setIsSmartFollowUpOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                title="Generate contextual follow-up message for WhatsApp, Email or SMS"
+              >
+                <Sparkles className="w-4 h-4 text-amber-200" />
+                <span>Smart Follow-Up (AI)</span>
+              </button>
 
               <button
                 onClick={handleCopyPhone}
@@ -610,6 +641,16 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                       </div>
                     )}
 
+                    {log.audio_url && (
+                      <div className="pt-1">
+                        <AudioPlayer
+                          src={log.audio_url}
+                          title={log.audio_name || `${lead.name} Call Recording`}
+                          duration={log.audio_duration}
+                        />
+                      </div>
+                    )}
+
                     {log.logged_by && (
                       <div className="flex items-center justify-end gap-1.5 pt-1 text-[10px] text-stone-500">
                         <span className="text-stone-400">Logged by:</span>
@@ -648,5 +689,15 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
         </div>
       </div>
     </div>
+
+      {/* Smart Follow-Up Modal */}
+      <SmartFollowUpModal
+        isOpen={isSmartFollowUpOpen}
+        onClose={() => setIsSmartFollowUpOpen(false)}
+        lead={lead}
+        outcomeTag={lead.call_logs && lead.call_logs.length > 0 ? lead.call_logs[0].outcome_tag : 'Interested'}
+        callNotes={lead.call_logs && lead.call_logs.length > 0 ? (lead.call_logs[0].full_notes || lead.call_logs[0].summary) : lead.business_notes}
+      />
+    </>
   );
 };

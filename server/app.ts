@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
-import type { OutcomeTag, Priority, User, UserRole, PotentialCustomer, PinnedComment, PinnedCommentStatus } from '../src/types';
+import type { Lead, OutcomeTag, Priority, User, UserRole, PotentialCustomer, PinnedComment, PinnedCommentStatus } from '../src/types';
 import {
   findUserByEmail,
   findUserById,
@@ -42,6 +42,25 @@ import {
   listNewsletterLogs,
   createNewsletterLog,
   flushUserData,
+  bulkCheckLeadDuplicates,
+  bulkImportLeads,
+  getObjectionCards,
+  createObjectionCard,
+  updateObjectionCard,
+  deleteObjectionCard,
+  resetDefaultObjectionCards,
+  getCallScripts,
+  createCallScript,
+  updateCallScript,
+  deleteCallScript,
+  resetDefaultCallScripts,
+  getCadenceConfig,
+  updateCadenceConfig,
+  resetCadenceConfig,
+  listAssistanceTickets,
+  createAssistanceTicket,
+  acceptAssistanceTicket,
+  cancelAssistanceTicket,
 } from './db.js';
 import {
   hashPassword,
@@ -57,6 +76,14 @@ import {
   getVapidPublicKey,
   sendWebPush,
 } from './webPush.js';
+import {
+  enhanceCallNotesWithGemini,
+  composeFollowUpWithGemini,
+  assessLeadHealthWithGemini,
+  getAdminGeminiConfig,
+  updateAdminGeminiConfig,
+  testAdminGeminiConfig,
+} from './gemini.js';
 
 dotenv.config();
 
@@ -806,6 +833,78 @@ app.post('/api/leads', requireAuth, async (req, res) => {
   }
 });
 
+// Pre-flight check duplicate leads for CSV import
+app.post('/api/leads/check-duplicates', requireAuth, async (req, res) => {
+  try {
+    const { leads } = req.body;
+    if (!Array.isArray(leads)) {
+      return res.status(400).json({ error: 'leads must be an array' });
+    }
+
+    const checkResult = await bulkCheckLeadDuplicates(leads);
+    res.json(checkResult);
+  } catch (err: any) {
+    console.error('check-duplicates error:', err);
+    res.status(500).json({ error: 'Failed to check duplicates' });
+  }
+});
+
+// Bulk import leads from CSV / Wizard
+app.post('/api/leads/bulk-import', requireAuth, async (req, res) => {
+  try {
+    const { leads, duplicateHandling = 'skip', defaultAssignee, roundRobinUserIds } = req.body;
+    if (!Array.isArray(leads) || leads.length === 0) {
+      return res.status(400).json({ error: 'No leads provided for import' });
+    }
+
+    const currentUser = (req as any).user as User;
+
+    // Security & permission checks for assignee
+    let safeDefaultAssignee: string | null = null;
+    let safeRoundRobinIds: string[] = [];
+
+    if (currentUser.role === 'admin') {
+      safeDefaultAssignee = defaultAssignee || null;
+      if (Array.isArray(roundRobinUserIds)) {
+        safeRoundRobinIds = roundRobinUserIds;
+      }
+    } else if (currentUser.role === 'manager') {
+      const teamUsers = await listUsers();
+      const validSubordinateIds = new Set(
+        teamUsers
+          .filter((u) => u.id === currentUser.id || u.managerId === currentUser.id)
+          .map((u) => u.id)
+      );
+
+      if (defaultAssignee && validSubordinateIds.has(defaultAssignee)) {
+        safeDefaultAssignee = defaultAssignee;
+      }
+      if (Array.isArray(roundRobinUserIds)) {
+        safeRoundRobinIds = roundRobinUserIds.filter((id) => validSubordinateIds.has(id));
+      }
+    } else {
+      // Agents can only import to themselves
+      safeDefaultAssignee = currentUser.id;
+      safeRoundRobinIds = [];
+    }
+
+    const result = await bulkImportLeads(leads, {
+      duplicateHandling,
+      defaultAssignee: safeDefaultAssignee,
+      roundRobinUserIds: safeRoundRobinIds,
+      importedById: currentUser.id,
+    });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (err: any) {
+    console.error('bulk-import error:', err);
+    res.status(500).json({ error: 'Failed to execute bulk import: ' + err.message });
+  }
+});
+
 // Update lead details
 app.patch('/api/leads/:id', requireAuth, async (req, res) => {
   try {
@@ -928,7 +1027,7 @@ app.post('/api/leads/:id/calls', requireAuth, async (req, res) => {
       });
     }
 
-    const { outcome_tag, summary, full_notes, next_action_at, business_info, priority } = req.body;
+    const { outcome_tag, summary, full_notes, next_action_at, business_info, priority, audio_url, audio_duration, audio_name } = req.body;
 
     if (!outcome_tag) {
       return res.status(400).json({ error: 'Outcome tag is required' });
@@ -945,6 +1044,9 @@ app.post('/api/leads/:id/calls', requireAuth, async (req, res) => {
       business_info: business_info?.trim() || undefined,
       logged_by: user.id,
       logged_by_name: user.name || user.email,
+      audio_url: audio_url || null,
+      audio_duration: typeof audio_duration === 'number' ? audio_duration : null,
+      audio_name: audio_name || null,
     });
 
     // 2. Prepare lead updates
@@ -1426,6 +1528,103 @@ app.delete('/api/pinned-comments/:id', requireAuth, requireManagerOrAdmin, async
 });
 
 // ==========================================
+// ASSISTANCE TICKETS API (Colleague Lead Takeover Requests)
+// ==========================================
+
+app.get('/api/assistance-tickets', requireAuth, async (req, res) => {
+  try {
+    const currentUser = (req as any).user as User;
+    const { scope, status, leadId } = req.query;
+
+    let tickets = await listAssistanceTickets({
+      status: (status as any) || undefined,
+      leadId: leadId ? String(leadId) : undefined,
+    });
+
+    if (scope === 'incoming') {
+      // Tickets requested by other agents that this user can take over
+      tickets = tickets.filter(
+        (t) =>
+          t.requested_by_id !== currentUser.id &&
+          (!t.target_agent_id || t.target_agent_id === currentUser.id || t.target_agent_id === currentUser.email)
+      );
+    } else if (scope === 'outgoing' || scope === 'my') {
+      // Tickets requested by current user
+      tickets = tickets.filter((t) => t.requested_by_id === currentUser.id);
+    }
+
+    res.json({ success: true, tickets });
+  } catch (err: any) {
+    console.error('listAssistanceTickets error:', err);
+    res.status(500).json({ error: 'Failed to fetch assistance tickets' });
+  }
+});
+
+app.post('/api/assistance-tickets', requireAuth, async (req, res) => {
+  try {
+    const currentUser = (req as any).user as User;
+    const { leadId, reason, reasonLabel, notes, targetAgentId, targetAgentName } = req.body;
+
+    if (!leadId) {
+      return res.status(400).json({ error: 'Lead ID is required' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'A reason for requesting assistance is required' });
+    }
+
+    const ticket = await createAssistanceTicket({
+      leadId,
+      requestedBy: currentUser,
+      reason,
+      reasonLabel,
+      notes: notes || '',
+      targetAgentId,
+      targetAgentName,
+    });
+
+    res.status(201).json({ success: true, ticket });
+  } catch (err: any) {
+    console.error('createAssistanceTicket error:', err);
+    res.status(500).json({ error: err?.message || 'Failed to create assistance ticket' });
+  }
+});
+
+app.post('/api/assistance-tickets/:id/accept', requireAuth, async (req, res) => {
+  try {
+    const currentUser = (req as any).user as User;
+    const result = await acceptAssistanceTicket({
+      ticketId: req.params.id,
+      acceptingUser: currentUser,
+    });
+
+    res.json({
+      success: true,
+      ticket: result.ticket,
+      lead: result.lead,
+      message: `Lead successfully reassigned to you. You are now the assigned agent for ${result.lead.name}.`,
+    });
+  } catch (err: any) {
+    console.error('acceptAssistanceTicket error:', err);
+    res.status(500).json({ error: err?.message || 'Failed to accept assistance ticket' });
+  }
+});
+
+app.post('/api/assistance-tickets/:id/cancel', requireAuth, async (req, res) => {
+  try {
+    const currentUser = (req as any).user as User;
+    const ticket = await cancelAssistanceTicket({
+      ticketId: req.params.id,
+      cancellingUserId: currentUser.id,
+    });
+
+    res.json({ success: true, ticket });
+  } catch (err: any) {
+    console.error('cancelAssistanceTicket error:', err);
+    res.status(500).json({ error: err?.message || 'Failed to cancel assistance ticket' });
+  }
+});
+
+// ==========================================
 // MANAGER DASHBOARD & PERFORMANCE INTEGRITY SCORING
 // ==========================================
 
@@ -1510,6 +1709,25 @@ app.get('/api/manager/team', requireAuth, requireManagerOrAdmin, async (req, res
   } catch (err: any) {
     console.error('get manager team error:', err);
     res.status(500).json({ error: 'Failed to fetch manager team' });
+  }
+});
+
+// Get team colleagues for collaboration & takeover requests (any authenticated user)
+app.get('/api/colleagues', requireAuth, async (req, res) => {
+  try {
+    const allUsers = await listUsers();
+    const colleagues = allUsers.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      avatarUrl: u.avatarUrl,
+      managerId: u.managerId,
+    }));
+    res.json({ colleagues, teamMembers: colleagues });
+  } catch (err: any) {
+    console.error('getColleagues error:', err);
+    res.status(500).json({ error: 'Failed to fetch colleagues' });
   }
 });
 
@@ -2121,6 +2339,469 @@ app.post('/api/notifications/test-push', async (req, res) => {
   });
 });
 
+// ==========================================
+// OBJECTION CARDS & CALL SCRIPTS API
+// ==========================================
+
+// GET /api/objection-cards - List all objection battle cards
+app.get('/api/objection-cards', requireAuth, async (req, res) => {
+  try {
+    const cards = await getObjectionCards();
+    return res.json({ cards });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch objection cards' });
+  }
+});
+
+// POST /api/objection-cards - Create a new battle card (Admin or Manager)
+app.post('/api/objection-cards', requireAuth, async (req, res) => {
+  try {
+    const { category, objection, rebuttal, talking_points, follow_up_question } = req.body;
+    if (!objection || !rebuttal) {
+      return res.status(400).json({ error: 'Objection and rebuttal are required' });
+    }
+    const card = await createObjectionCard({
+      category: category || 'general',
+      objection,
+      rebuttal,
+      talking_points: Array.isArray(talking_points) ? talking_points : undefined,
+      follow_up_question,
+    });
+    return res.status(201).json({ card });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to create objection card' });
+  }
+});
+
+// PUT /api/objection-cards/:id - Update an objection card
+app.put('/api/objection-cards/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const card = await updateObjectionCard(id, updates);
+    return res.json({ card });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update objection card' });
+  }
+});
+
+// DELETE /api/objection-cards/:id - Delete an objection card
+app.delete('/api/objection-cards/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const success = await deleteObjectionCard(id);
+    return res.json({ success });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to delete objection card' });
+  }
+});
+
+// POST /api/objection-cards/reset - Reset to factory defaults
+app.post('/api/objection-cards/reset', requireAuth, async (req, res) => {
+  try {
+    const cards = await resetDefaultObjectionCards();
+    return res.json({ cards, message: 'Objection battle cards reset to default repository' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to reset objection cards' });
+  }
+});
+
+// GET /api/call-scripts - List all call scripts
+app.get('/api/call-scripts', requireAuth, async (req, res) => {
+  try {
+    const scripts = await getCallScripts();
+    return res.json({ scripts });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch call scripts' });
+  }
+});
+
+// POST /api/call-scripts - Create a call script
+app.post('/api/call-scripts', requireAuth, async (req, res) => {
+  try {
+    const { title, category, content } = req.body;
+    if (!title || !content) {
+      return res.status(400).json({ error: 'Script title and content are required' });
+    }
+    const script = await createCallScript({
+      title,
+      category: category || 'custom',
+      content,
+    });
+    return res.status(201).json({ script });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to create call script' });
+  }
+});
+
+// PUT /api/call-scripts/:id - Update a call script
+app.put('/api/call-scripts/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const script = await updateCallScript(id, updates);
+    return res.json({ script });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update call script' });
+  }
+});
+
+// DELETE /api/call-scripts/:id - Delete a call script
+app.delete('/api/call-scripts/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const success = await deleteCallScript(id);
+    return res.json({ success });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to delete call script' });
+  }
+});
+
+// POST /api/call-scripts/reset - Reset to factory defaults
+app.post('/api/call-scripts/reset', requireAuth, async (req, res) => {
+  try {
+    const scripts = await resetDefaultCallScripts();
+    return res.json({ scripts, message: 'Call scripts reset to default repository' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to reset call scripts' });
+  }
+});
+
+// ==========================================
+// QUICK-OUTCOME CADENCE API ROUTES
+// ==========================================
+
+// GET /api/cadence - Retrieve current outcome cadence rules
+app.get('/api/cadence', requireAuth, async (req, res) => {
+  try {
+    const config = await getCadenceConfig();
+    return res.json({ cadence: config });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch cadence configuration' });
+  }
+});
+
+// PUT /api/cadence - Update cadence configuration (Manager or Admin)
+app.put('/api/cadence', requireAuth, async (req, res) => {
+  const currentUser = (req as any).user as User;
+  if (currentUser.role !== 'admin' && currentUser.role !== 'manager') {
+    return res.status(403).json({ error: 'Only managers and admins can configure outcome cadences' });
+  }
+
+  try {
+    const { cadence } = req.body;
+    if (!cadence || typeof cadence !== 'object') {
+      return res.status(400).json({ error: 'Invalid cadence configuration payload' });
+    }
+    const updated = await updateCadenceConfig(cadence);
+    return res.json({ cadence: updated, message: 'Outcome cadences updated successfully' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update cadence configuration' });
+  }
+});
+
+// POST /api/cadence/reset - Reset cadence configuration to defaults (Manager or Admin)
+app.post('/api/cadence/reset', requireAuth, async (req, res) => {
+  const currentUser = (req as any).user as User;
+  if (currentUser.role !== 'admin' && currentUser.role !== 'manager') {
+    return res.status(403).json({ error: 'Only managers and admins can reset outcome cadences' });
+  }
+
+  try {
+    const reset = await resetCadenceConfig();
+    return res.json({ cadence: reset, message: 'Outcome cadences reset to factory presets' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to reset cadence configuration' });
+  }
+});
+
+// ==========================================
+// GEMINI AI INTEGRATION API ROUTES
+// ==========================================
+
+// POST /api/ai/enhance-call-notes - Transform messy shorthand into structured CRM notes
+app.post('/api/ai/enhance-call-notes', requireAuth, async (req, res) => {
+  try {
+    const { leadName, businessInfo, outcomeTag, rawNotes, previousContext } = req.body;
+    if (!rawNotes || typeof rawNotes !== 'string' || !rawNotes.trim()) {
+      return res.status(400).json({ error: 'Call notes content is required to structure with AI' });
+    }
+
+    const enhanced = await enhanceCallNotesWithGemini({
+      leadName: leadName || 'Prospect',
+      businessInfo,
+      outcomeTag: outcomeTag || 'Interested',
+      rawNotes: rawNotes.trim(),
+      previousContext,
+    });
+
+    return res.json({ enhanced });
+  } catch (err: any) {
+    console.error('Failed to enhance call notes with AI:', err);
+    return res.status(500).json({ error: err.message || 'AI note structuring failed' });
+  }
+});
+
+// POST /api/ai/compose-followup - Smart WhatsApp, Email, & SMS message generator
+app.post('/api/ai/compose-followup', requireAuth, async (req, res) => {
+  try {
+    const currentUser = (req as any).user as User;
+    const { leadName, businessInfo, outcomeTag, callNotes, tone, agentName } = req.body;
+
+    const messages = await composeFollowUpWithGemini({
+      leadName: leadName || 'Prospect',
+      businessInfo,
+      outcomeTag: outcomeTag || 'Interested',
+      callNotes,
+      tone: tone || 'professional',
+      agentName: agentName || currentUser?.name || 'Sales Representative',
+    });
+
+    return res.json({ messages });
+  } catch (err: any) {
+    console.error('Failed to compose follow-up message with AI:', err);
+    return res.status(500).json({ error: err.message || 'AI follow-up composition failed' });
+  }
+});
+
+// POST /api/ai/lead-health - Analyze account temperature and churn risk
+app.post('/api/ai/lead-health', requireAuth, async (req, res) => {
+  try {
+    const { leadId, lead: providedLead, daysCold: providedDaysCold } = req.body;
+
+    let targetLead: Lead | null = null;
+    let daysCold = typeof providedDaysCold === 'number' ? providedDaysCold : 0;
+
+    if (leadId) {
+      targetLead = await getLeadById(leadId);
+      if (!targetLead) {
+        return res.status(404).json({ error: 'Lead not found for health assessment' });
+      }
+      // Compute days since last touch
+      const lastTouchDate = targetLead.call_logs?.[0]?.timestamp || targetLead.updated_at || targetLead.created_at;
+      daysCold = Math.max(0, Math.floor((Date.now() - new Date(lastTouchDate).getTime()) / (1000 * 60 * 60 * 24)));
+    } else if (providedLead) {
+      targetLead = providedLead;
+    }
+
+    if (!targetLead) {
+      return res.status(400).json({ error: 'Either leadId or lead object is required' });
+    }
+
+    const health = await assessLeadHealthWithGemini({
+      lead: targetLead,
+      daysCold,
+    });
+
+    // Optionally update lead in db if leadId provided
+    if (leadId && targetLead) {
+      await updateLead(leadId, { ai_health: health } as any).catch((e) => {
+        console.warn('Could not persist ai_health on lead record:', e);
+      });
+    }
+
+    return res.json({ health });
+  } catch (err: any) {
+    console.error('Failed to compute lead health with AI:', err);
+    return res.status(500).json({ error: err.message || 'AI lead health analysis failed' });
+  }
+});
+
+// ====================================================
+// ADMIN GEMINI AI & MODEL CONFIGURATION ENDPOINTS
+// ====================================================
+
+// GET /api/admin/gemini-config (Admin only)
+app.get('/api/admin/gemini-config', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const config = getAdminGeminiConfig();
+    return res.json({ config });
+  } catch (err: any) {
+    console.error('Failed to get Gemini config:', err);
+    return res.status(500).json({ error: err.message || 'Failed to retrieve Gemini config' });
+  }
+});
+
+// POST /api/admin/gemini-config (Admin only)
+app.post('/api/admin/gemini-config', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const { apiKey, model } = req.body;
+    const config = updateAdminGeminiConfig({ apiKey, model });
+    return res.json({
+      config,
+      message: 'Gemini settings saved successfully! New configuration is now active for all users.',
+    });
+  } catch (err: any) {
+    console.error('Failed to update Gemini config:', err);
+    return res.status(500).json({ error: err.message || 'Failed to update Gemini config' });
+  }
+});
+
+// POST /api/admin/gemini-test (Admin only)
+app.post('/api/admin/gemini-test', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { apiKey, model } = req.body;
+    const result = await testAdminGeminiConfig({ apiKey, model });
+    return res.json(result);
+  } catch (err: any) {
+    console.error('Failed to test Gemini config:', err);
+    return res.status(500).json({ error: err.message || 'Gemini connection test failed' });
+  }
+});
+
+// ====================================================
+// CATEGORY 3: MANAGER LIVE LEADERBOARD & ACTIVITY FEED
+// ====================================================
+
+// GET /api/manager/leaderboard - Real-time scoreboard with daily dials, connects, meetings, directive completions
+app.get('/api/manager/leaderboard', requireAuth, async (req, res) => {
+  try {
+    const period = (req.query.period as string) || 'today';
+    const users = await listUsers();
+    const allLeads = await getLeads({ filter: 'all' });
+    const allDirectives = await listPinnedComments({});
+
+    // Filter date boundaries based on period
+    const now = new Date();
+    let since = new Date(0); // all time default
+
+    if (period === 'today') {
+      since = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    } else if (period === 'week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday start
+      since = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0);
+    } else if (period === 'month') {
+      since = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    }
+
+    const sinceTime = since.getTime();
+
+    // Build leaderboard user map
+    const userMap = new Map<string, any>();
+    for (const u of users) {
+      userMap.set(u.id, {
+        userId: u.id,
+        name: u.name || u.email,
+        email: u.email,
+        role: u.role,
+        avatarUrl: (u as any).avatarUrl || (u as any).avatar_url,
+        dialsCount: 0,
+        connectsCount: 0,
+        meetingsCount: 0,
+        closedCount: 0,
+        directivesCompleted: 0,
+        score: 0,
+      });
+    }
+
+    // Activity feed collection
+    const activityFeed: any[] = [];
+
+    // Tally calls and populate activity feed
+    for (const lead of allLeads) {
+      if (!lead.call_logs) continue;
+      for (const call of lead.call_logs) {
+        const callTime = new Date(call.timestamp).getTime();
+        const repId = call.logged_by || lead.assigned_to;
+
+        if (callTime >= sinceTime && repId && userMap.has(repId)) {
+          const member = userMap.get(repId)!;
+          member.dialsCount += 1;
+
+          const isConnect = !['Busy', "Couldn't Connect", 'No Answer'].includes(call.outcome_tag);
+          if (isConnect) member.connectsCount += 1;
+
+          if (['Interested', 'Call Back Later'].includes(call.outcome_tag)) {
+            member.meetingsCount += 1;
+          }
+          if (call.outcome_tag === 'Closed/Matured') {
+            member.closedCount += 1;
+          }
+        }
+
+        // Add to activity feed (keep last 30 days or period)
+        if (callTime >= (period === 'all' ? Date.now() - 30 * 86400000 : sinceTime)) {
+          activityFeed.push({
+            id: call.id,
+            type: call.outcome_tag === 'Closed/Matured' ? 'closed_deal' : 'call',
+            userId: repId || 'unknown',
+            userName: call.logged_by_name || 'Team Rep',
+            leadId: lead.id,
+            leadName: lead.name,
+            outcomeTag: call.outcome_tag,
+            summary: call.summary,
+            timestamp: call.timestamp,
+            audioUrl: call.audio_url || null,
+            audioDuration: call.audio_duration || null,
+          });
+        }
+      }
+    }
+
+    // Tally completed directives
+    for (const dir of allDirectives) {
+      if (dir.status === 'done' && dir.agent_id && userMap.has(dir.agent_id)) {
+        const doneTime = dir.done_at ? new Date(dir.done_at).getTime() : new Date(dir.created_at).getTime();
+        if (doneTime >= sinceTime) {
+          const member = userMap.get(dir.agent_id)!;
+          member.directivesCompleted += 1;
+
+          activityFeed.push({
+            id: 'dir_' + dir.id,
+            type: 'directive_completed',
+            userId: dir.agent_id,
+            userName: dir.agent_name || member.name,
+            leadId: dir.lead_id || undefined,
+            leadName: dir.lead_name || 'Account',
+            summary: `Completed directive: "${dir.content.slice(0, 80)}"`,
+            timestamp: dir.done_at || dir.created_at,
+          });
+        }
+      }
+    }
+
+    // Compute composite gamification scores
+    const leaderboard = Array.from(userMap.values()).map((m) => {
+      const score =
+        m.dialsCount * 1 +
+        m.connectsCount * 3 +
+        m.meetingsCount * 6 +
+        m.closedCount * 15 +
+        m.directivesCompleted * 8;
+      return { ...m, score };
+    });
+
+    // Sort descending by score, then dials
+    leaderboard.sort((a, b) => b.score - a.score || b.dialsCount - a.dialsCount);
+
+    // Assign rank
+    leaderboard.forEach((m, idx) => {
+      m.rank = idx + 1;
+    });
+
+    // Sort activity feed newest first, limit 60
+    activityFeed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const topFeed = activityFeed.slice(0, 60);
+
+    const totals = {
+      totalDials: leaderboard.reduce((acc, m) => acc + m.dialsCount, 0),
+      totalConnects: leaderboard.reduce((acc, m) => acc + m.connectsCount, 0),
+      totalMeetings: leaderboard.reduce((acc, m) => acc + m.meetingsCount, 0),
+      totalClosed: leaderboard.reduce((acc, m) => acc + m.closedCount, 0),
+    };
+
+    return res.json({
+      period,
+      leaderboard,
+      activityFeed: topFeed,
+      totals,
+    });
+  } catch (err: any) {
+    console.error('Leaderboard calculation failed:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to fetch leaderboard' });
+  }
+});
 
 // Health check endpoints for Vercel and monitoring
 app.get(['/api', '/api/health'], (req, res) => {

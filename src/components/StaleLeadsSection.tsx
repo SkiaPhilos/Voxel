@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, Phone, ChevronDown, ChevronUp, CalendarClock } from 'lucide-react';
+import { AlertCircle, Phone, ChevronDown, ChevronUp, CalendarClock, PhoneCall } from 'lucide-react';
 import type { Lead } from '../types';
 import { getDaysSinceLastTouch } from '../lib/dateUtils';
 import { ContactActionMenu } from './ContactActionMenu';
@@ -8,12 +8,14 @@ interface StaleLeadsSectionProps {
   leads: Lead[];
   onLogCall: (lead: Lead) => void;
   onOpenDetail: (lead: Lead) => void;
+  onStartPowerDialer?: (leads: Lead[]) => void;
 }
 
 export const StaleLeadsSection: React.FC<StaleLeadsSectionProps> = ({
   leads,
   onLogCall,
   onOpenDetail,
+  onStartPowerDialer,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -21,9 +23,9 @@ export const StaleLeadsSection: React.FC<StaleLeadsSectionProps> = ({
 
   return (
     <div className="mb-6 rounded-2xl border border-stone-300/80 bg-stone-50/80 p-4 sm:p-5 shadow-2xs">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-stone-200 text-stone-700 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg bg-stone-200 text-stone-700 flex items-center justify-center shrink-0">
             <CalendarClock className="w-4 h-4" />
           </div>
           <div>
@@ -39,13 +41,27 @@ export const StaleLeadsSection: React.FC<StaleLeadsSectionProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="text-xs font-semibold text-stone-600 hover:text-stone-900 flex items-center gap-1 p-1 rounded-md hover:bg-stone-200/50 transition-colors cursor-pointer"
-        >
-          <span>{isCollapsed ? 'Show Leads' : 'Collapse'}</span>
-          {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-        </button>
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          {onStartPowerDialer && leads.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onStartPowerDialer(leads)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-900 text-white text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0"
+              title="Start rapid calling through stale leads"
+            >
+              <PhoneCall className="w-3.5 h-3.5 text-amber-400" />
+              <span>Call Stale Queue ({leads.length})</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="text-xs font-semibold text-stone-600 hover:text-stone-900 flex items-center gap-1 p-1.5 rounded-md hover:bg-stone-200/50 transition-colors cursor-pointer"
+          >
+            <span>{isCollapsed ? 'Show Leads' : 'Collapse'}</span>
+            {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
+        </div>
       </div>
 
       {!isCollapsed && (

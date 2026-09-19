@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Phone,
+  PhoneCall,
   Clock,
   ChevronDown,
   ChevronUp,
@@ -15,18 +16,26 @@ import {
   ArrowRightLeft,
   Pin,
   User as UserIcon,
+  MessageSquareText,
+  Handshake,
 } from 'lucide-react';
 import type { Lead, OutcomeTag, PinnedComment, User } from '../types';
 import { isDueNowOrOverdue, formatFriendlyTime } from '../lib/dateUtils';
 import { ContactActionMenu } from './ContactActionMenu';
 import { PinnedCommentBadge } from './PinnedCommentBadge';
+import { LeadHealthBadge } from './LeadHealthBadge';
+import { SmartFollowUpModal } from './SmartFollowUpModal';
+import { QuickPostponeModal } from './QuickPostponeModal';
+import { api } from '../lib/api';
 
 interface LeadCardProps {
   lead: Lead;
   onLogCall: (lead: Lead) => void;
   onOpenDetail: (lead: Lead) => void;
   onTogglePriority: (lead: Lead) => void;
+  onPostpone?: (lead: Lead, newDatetimeIso?: string) => void;
   onReassign?: (lead: Lead) => void;
+  onRequestAssistance?: (lead: Lead) => void;
   pinnedComments?: PinnedComment[];
   onPinDirective?: (lead: Lead) => void;
   onPinCallLog?: (lead: Lead, callLogId: string, snippet: string) => void;
@@ -39,7 +48,9 @@ export const LeadCard: React.FC<LeadCardProps> = ({
   onLogCall,
   onOpenDetail,
   onTogglePriority,
+  onPostpone,
   onReassign,
+  onRequestAssistance,
   pinnedComments = [],
   onPinDirective,
   onPinCallLog,
@@ -47,6 +58,76 @@ export const LeadCard: React.FC<LeadCardProps> = ({
   onCommentStatusUpdated,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isFollowUpOpen, setIsFollowUpOpen] = useState(false);
+  const [isPostponeModalOpen, setIsPostponeModalOpen] = useState(false);
+
+  // Swipe gesture state
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const isHorizontalSwipeRef = useRef<boolean | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+    isHorizontalSwipeRef.current = null;
+    setIsSwiping(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    const deltaX = e.touches[0].clientX - touchStartXRef.current;
+    const deltaY = e.touches[0].clientY - touchStartYRef.current;
+
+    if (isHorizontalSwipeRef.current === null) {
+      if (Math.abs(deltaX) > 8 || Math.abs(deltaY) > 8) {
+        isHorizontalSwipeRef.current = Math.abs(deltaX) > Math.abs(deltaY);
+      }
+    }
+
+    if (isHorizontalSwipeRef.current) {
+      // Clamped swipe distance for elastic feel
+      const clamped = Math.max(-135, Math.min(135, deltaX));
+      setSwipeOffset(clamped);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartXRef.current !== null && isHorizontalSwipeRef.current) {
+      const SWIPE_THRESHOLD = 70;
+      if (swipeOffset < -SWIPE_THRESHOLD) {
+        // Swiped LEFT -> Trigger Log Call
+        if (typeof window !== 'undefined' && window.navigator?.vibrate) {
+          try { window.navigator.vibrate(35); } catch {}
+        }
+        onLogCall(lead);
+      } else if (swipeOffset > SWIPE_THRESHOLD) {
+        // Swiped RIGHT -> Trigger Postpone / Reschedule
+        if (typeof window !== 'undefined' && window.navigator?.vibrate) {
+          try { window.navigator.vibrate(35); } catch {}
+        }
+        setIsPostponeModalOpen(true);
+      }
+    }
+
+    setIsSwiping(false);
+    setSwipeOffset(0);
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+    isHorizontalSwipeRef.current = null;
+  };
+
+  const handlePostponeSave = async (leadId: string, newDatetimeIso: string) => {
+    if (onPostpone) {
+      onPostpone(lead, newDatetimeIso);
+    } else {
+      await api.updateLead(leadId, {
+        next_action_at: newDatetimeIso,
+        status: 'Follow-up Scheduled',
+      });
+    }
+  };
 
   const isOverdue = isDueNowOrOverdue(lead.next_action_at);
   const isHighPriority = lead.priority === 'High';
@@ -87,16 +168,63 @@ export const LeadCard: React.FC<LeadCardProps> = ({
   };
 
   return (
-    <div
-      id={`lead-card-${lead.id}`}
-      className={`relative bg-white rounded-xl border transition-all duration-150 ${
-        isOverdue
-          ? 'border-amber-400/90 shadow-sm ring-1 ring-amber-400/30'
-          : isHighPriority
-          ? 'border-amber-300/80 shadow-2xs'
-          : 'border-stone-200/90 hover:border-stone-300 shadow-2xs'
-      }`}
-    >
+    <div className="relative overflow-hidden rounded-xl touch-pan-y group">
+      {/* Background Swipe Actions Layer */}
+      {/* Right-swipe reveal (Left side): Postpone / Reschedule */}
+      <div
+        className={`absolute inset-y-0 left-0 w-full bg-gradient-to-r from-sky-600 via-sky-600 to-sky-700 text-white flex items-center justify-start pl-6 gap-2.5 font-bold text-xs transition-opacity duration-150 rounded-xl ${
+          swipeOffset > 8 ? 'opacity-100 z-0' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <div
+          className={`flex items-center gap-2 transition-transform duration-150 ${
+            swipeOffset >= 70 ? 'scale-110 text-white' : 'scale-95 text-sky-100'
+          }`}
+        >
+          <Calendar className="w-5 h-5 shrink-0" />
+          <span className="tracking-wide">
+            {swipeOffset >= 70 ? 'Release to Reschedule' : 'Swipe to Postpone'}
+          </span>
+        </div>
+      </div>
+
+      {/* Left-swipe reveal (Right side): Log Call */}
+      <div
+        className={`absolute inset-y-0 right-0 w-full bg-gradient-to-l from-emerald-600 via-emerald-600 to-emerald-700 text-white flex items-center justify-end pr-6 gap-2.5 font-bold text-xs transition-opacity duration-150 rounded-xl ${
+          swipeOffset < -8 ? 'opacity-100 z-0' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <div
+          className={`flex items-center gap-2 transition-transform duration-150 ${
+            swipeOffset <= -70 ? 'scale-110 text-white' : 'scale-95 text-emerald-100'
+          }`}
+        >
+          <span className="tracking-wide">
+            {swipeOffset <= -70 ? 'Release to Log Call' : 'Swipe to Log Call'}
+          </span>
+          <PhoneCall className="w-5 h-5 shrink-0" />
+        </div>
+      </div>
+
+      {/* Foreground Swipeable Card */}
+      <div
+        id={`lead-card-${lead.id}`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        style={{
+          transform: `translateX(${swipeOffset}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)',
+        }}
+        className={`relative z-10 bg-white rounded-xl border transition-colors duration-150 ${
+          isOverdue
+            ? 'border-amber-400/90 shadow-sm ring-1 ring-amber-400/30'
+            : isHighPriority
+            ? 'border-amber-300/80 shadow-2xs'
+            : 'border-stone-200/90 hover:border-stone-300 shadow-2xs'
+        }`}
+      >
       {/* Visual Anchor for attached physical sticky note */}
       <div
         id={`lead-sticky-anchor-${lead.id}`}
@@ -141,6 +269,7 @@ export const LeadCard: React.FC<LeadCardProps> = ({
             </button>
 
             {getStatusBadge(lead.status)}
+            <LeadHealthBadge lead={lead} size="sm" />
             {lastCall && getOutcomeTagBadge(lastCall.outcome_tag)}
 
             {lead.assigned_to_name && (
@@ -184,6 +313,19 @@ export const LeadCard: React.FC<LeadCardProps> = ({
               </button>
             )}
 
+            {/* Request Colleague Assistance button */}
+            {onRequestAssistance && (
+              <button
+                type="button"
+                onClick={() => onRequestAssistance(lead)}
+                title="Request a colleague to take over this lead"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50/70 hover:bg-amber-100 text-amber-900 border border-amber-300/80 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+              >
+                <Handshake className="w-3.5 h-3.5 text-amber-700" />
+                <span className="hidden md:inline">Ask Takeover</span>
+              </button>
+            )}
+
             {/* Pin directive action for Managers / Admins */}
             {onPinDirective && (
               <button
@@ -196,6 +338,17 @@ export const LeadCard: React.FC<LeadCardProps> = ({
                 <span>+ Pin</span>
               </button>
             )}
+
+            {/* Smart follow-up 1-click generator */}
+            <button
+              type="button"
+              onClick={() => setIsFollowUpOpen(true)}
+              title="Smart Follow-Up Composer (WhatsApp / Email / SMS)"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+            >
+              <MessageSquareText className="w-3.5 h-3.5 text-amber-700" />
+              <span className="hidden sm:inline">Follow-Up</span>
+            </button>
 
             <button
               id={`log-call-btn-${lead.id}`}
@@ -348,6 +501,24 @@ export const LeadCard: React.FC<LeadCardProps> = ({
           </div>
         )}
       </div>
+      </div>
+
+      {/* Smart Follow-Up Modal */}
+      <SmartFollowUpModal
+        isOpen={isFollowUpOpen}
+        onClose={() => setIsFollowUpOpen(false)}
+        lead={lead}
+        outcomeTag={lastCall?.outcome_tag || 'Interested'}
+        callNotes={lastCall?.full_notes || lastCall?.summary}
+      />
+
+      {/* Quick Postpone / Reschedule Modal (triggered on Right Swipe) */}
+      <QuickPostponeModal
+        lead={lead}
+        isOpen={isPostponeModalOpen}
+        onClose={() => setIsPostponeModalOpen(false)}
+        onPostpone={handlePostponeSave}
+      />
     </div>
   );
 };
