@@ -50,6 +50,8 @@ export interface Lead {
   phone: string; // required, unique
   name: string;
   business_notes: string;
+  business_info?: string;
+  company?: string;
   source?: string;
   email?: string;
   created_at: string; // auto timestamp, immutable
@@ -59,7 +61,6 @@ export interface Lead {
   next_action_at: string | null; // ISO datetime string or null
   last_notified_at?: string | null; // ISO datetime string or null
   call_logs: CallLog[];
-  business_info?: string;
   archived_at?: string | null;
   archive_reason?: string;
   assigned_to?: string | null; // current active owner user ID
@@ -225,11 +226,16 @@ export interface LeadHealthAssessment {
   recommendedTactic: string;
   decayFactors: string[];
   assessedAt: string;
+  isAiPowered?: boolean;
+  provider?: 'gemini' | 'heuristic';
+  modelUsed?: string;
 }
 
 export interface AdminGeminiConfig {
   hasApiKey: boolean;
   keyPreview: string;
+  configured?: boolean;
+  maskedKey?: string;
   model: string;
   source: 'admin' | 'env' | 'none';
   availableModels: Array<{ id: string; name: string; description: string; isDefault?: boolean }>;

@@ -757,7 +757,17 @@ export const api = {
   async updateAdminGeminiConfig(data: {
     apiKey?: string;
     model?: string;
-  }): Promise<{ config: AdminGeminiConfig; message: string }> {
+    verify?: boolean;
+  }): Promise<{
+    config: AdminGeminiConfig;
+    message: string;
+    verification?: {
+      success: boolean;
+      model: string;
+      message: string;
+      latencyMs: number;
+    } | null;
+  }> {
     return request('/api/admin/gemini-config', {
       method: 'POST',
       body: JSON.stringify(data),

@@ -21,9 +21,13 @@ import { formatPhoneForDialer } from '../lib/contactUtils';
 
 interface PotentialCustomersViewProps {
   currentUser: User;
+  onCustomerCreated?: () => void;
 }
 
-export const PotentialCustomersView: React.FC<PotentialCustomersViewProps> = ({ currentUser }) => {
+export const PotentialCustomersView: React.FC<PotentialCustomersViewProps> = ({
+  currentUser,
+  onCustomerCreated,
+}) => {
   const [customers, setCustomers] = useState<PotentialCustomer[]>([]);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -77,6 +81,7 @@ export const PotentialCustomersView: React.FC<PotentialCustomersViewProps> = ({ 
       });
 
       setCustomers((prev) => [res.customer, ...prev]);
+      onCustomerCreated?.();
       setIsModalOpen(false);
       setNewName('');
       setNewPhone('');

@@ -103,10 +103,17 @@ export default function App() {
   const [powerDialerQueue, setPowerDialerQueue] = useState<Lead[]>([]);
   const [powerDialerTitle, setPowerDialerTitle] = useState('Calling Queue');
 
-  // Browser Notification state
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
-    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
-  );
+  // Browser Notification state safely initialized for mobile devices & PWAs
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => {
+    try {
+      if (typeof window !== 'undefined' && 'Notification' in window && typeof Notification?.permission === 'string') {
+        return Notification.permission;
+      }
+    } catch {
+      // Ignored for restricted mobile webviews / iOS Safari
+    }
+    return 'default';
+  });
 
   // In-app alert banner
   const [dueAlertLead, setDueAlertLead] = useState<Lead | null>(null);

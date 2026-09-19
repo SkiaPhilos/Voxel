@@ -65,13 +65,23 @@ export const AdminGeminiSettings: React.FC = () => {
       const res = await api.updateAdminGeminiConfig({
         apiKey: apiKeyInput.trim() ? apiKeyInput.trim() : undefined,
         model: selectedModel,
+        verify: true,
       });
 
       setConfig(res.config);
       setApiKeyInput(''); // Clear input after successful save
+
+      if (res.verification) {
+        setTestResult({
+          success: res.verification.success,
+          latencyMs: res.verification.latencyMs,
+          message: res.verification.message,
+        });
+      }
+
       setStatusMessage({
-        type: 'success',
-        text: res.message || 'Gemini configuration successfully saved and activated for all team members!',
+        type: res.verification && !res.verification.success ? 'error' : 'success',
+        text: res.message || 'Gemini configuration successfully saved and verified!',
       });
     } catch (err: any) {
       console.error('Save failed:', err);
@@ -100,11 +110,27 @@ export const AdminGeminiSettings: React.FC = () => {
         latencyMs: res.latencyMs,
         message: res.message,
       });
+
+      if (res.success) {
+        setStatusMessage({
+          type: 'success',
+          text: `Verified! Google Gemini responded in ${res.latencyMs}ms using ${res.model}.`,
+        });
+      } else {
+        setStatusMessage({
+          type: 'error',
+          text: `Connection test failed: ${res.message}`,
+        });
+      }
     } catch (err: any) {
       console.error('Test connection error:', err);
       setTestResult({
         success: false,
         message: err?.message || 'Connection test failed. Please verify API key.',
+      });
+      setStatusMessage({
+        type: 'error',
+        text: err?.message || 'Connection test failed. Please verify API key.',
       });
     } finally {
       setIsTesting(false);
@@ -226,28 +252,45 @@ export const AdminGeminiSettings: React.FC = () => {
             )}
           </div>
 
-          <div className="relative">
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              placeholder={config?.configured ? `Leave blank to keep existing key (${config.maskedKey})` : 'AIzaSy... (Paste Gemini API Key)'}
-              className="w-full px-3.5 py-2.5 pr-10 text-xs font-mono rounded-xl bg-stone-50 border border-stone-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-stone-900"
-            />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder={config?.configured ? `Leave blank to keep active key (${config.maskedKey})` : 'AIzaSy... (Paste Gemini API Key)'}
+                className="w-full px-3.5 py-2.5 pr-10 text-xs font-mono rounded-xl bg-stone-50 border border-stone-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-stone-900"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer"
+                title={showKey ? 'Hide key' : 'Show key'}
+              >
+                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => setShowKey(!showKey)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors cursor-pointer"
-              title={showKey ? 'Hide key' : 'Show key'}
+              onClick={handleTestConnection}
+              disabled={isTesting || (!config?.configured && !apiKeyInput.trim())}
+              title="Test connection with Google Gemini"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 disabled:opacity-40 text-stone-800 text-xs font-bold border border-stone-200 transition-colors cursor-pointer shrink-0"
             >
-              {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {isTesting ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-stone-600" />
+              ) : (
+                <Zap className="w-3.5 h-3.5 text-amber-700" />
+              )}
+              <span className="hidden sm:inline">Test Connection</span>
             </button>
           </div>
 
           <p className="text-[11px] text-stone-500 flex items-center gap-1">
             <Info className="w-3 h-3 text-stone-400 shrink-0" />
             <span>
-              Keys are securely stored in server environment storage and masked in responses.
+              Saving will automatically verify the API key with Google. Keys are securely stored in server memory and masked.
             </span>
           </p>
         </div>
@@ -329,9 +372,9 @@ export const AdminGeminiSettings: React.FC = () => {
             {isSaving ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Send className="w-3.5 h-3.5" />
+              <ShieldCheck className="w-3.5 h-3.5" />
             )}
-            <span>Save &amp; Apply Changes</span>
+            <span>{isSaving ? 'Verifying & Saving...' : 'Save & Verify Connection'}</span>
           </button>
         </div>
       </form>

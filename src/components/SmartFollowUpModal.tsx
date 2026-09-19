@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sparkles,
   MessageSquare,
@@ -106,15 +107,18 @@ export const SmartFollowUpModal: React.FC<SmartFollowUpModalProps> = ({
     { id: 'value_focused', label: 'Value & Proof', icon: '💎' },
   ];
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/60 backdrop-blur-xs overflow-y-auto"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl my-6 bg-[#FAF8F5] border border-stone-200 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92vh] transition-all"
-        onClick={(e) => e.stopPropagation()}
-      >
+  if (!isOpen) return null;
+
+  return typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/60 backdrop-blur-xs overflow-y-auto"
+          onClick={onClose}
+        >
+          <div
+            className="w-full max-w-2xl my-6 bg-[#FAF8F5] border border-stone-200 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92vh] transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-200 bg-white flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -448,6 +452,7 @@ export const SmartFollowUpModal: React.FC<SmartFollowUpModalProps> = ({
           )}
         </div>
       </div>
-    </div>
-  );
+    </div>,
+    document.body
+  ) : null;
 };

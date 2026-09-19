@@ -25,6 +25,9 @@ import { formatFriendlyTime } from '../lib/dateUtils';
 interface AskAssistanceViewProps {
   currentUser: User;
   leads: Lead[];
+  teamMembers?: User[];
+  onOpenNewTicketModal?: (preselectedLead?: Lead) => void;
+  onLeadUpdated?: (updatedLead: Lead) => void;
   onOpenLeadDetail?: (lead: Lead) => void;
   onTicketCreated?: (ticket: AssistanceTicket) => void;
 }
@@ -98,7 +101,7 @@ export const AskAssistanceView: React.FC<AskAssistanceViewProps> = ({
         l.assigned_to === currentUser.id ||
         l.assigned_to === currentUser.email ||
         (!l.assigned_to && currentUser.role === 'admin');
-      const isNotClosed = l.status !== 'Closed - Won' && l.status !== 'Closed - Lost' && l.status !== 'Archived';
+      const isNotClosed = l.status !== 'Matured (Closed)' && l.status !== 'Service Denied' && l.status !== 'Archived';
       return isMine && isNotClosed;
     });
   }, [leads, currentUser]);

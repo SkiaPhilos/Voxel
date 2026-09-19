@@ -5,6 +5,7 @@ interface UserAvatarProps {
     name?: string | null;
     avatarUrl?: string | null;
     email?: string | null;
+    [key: string]: any;
   } | null;
   name?: string | null;
   avatarUrl?: string | null;

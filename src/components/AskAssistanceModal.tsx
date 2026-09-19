@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Handshake,
   X,
@@ -21,9 +22,11 @@ interface AskAssistanceModalProps {
   onClose: () => void;
   currentUser: User;
   lead?: Lead | null;
+  initialLead?: Lead | null;
   myLeads?: Lead[];
+  availableLeads?: Lead[];
   teamMembers?: User[];
-  onTicketCreated?: (ticket: AssistanceTicket) => void;
+  onTicketCreated?: (ticket?: AssistanceTicket) => void;
 }
 
 const REASONS: Array<{
@@ -69,10 +72,15 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
   onClose,
   currentUser,
   lead: propLead,
+  initialLead,
   myLeads = [],
+  availableLeads = [],
   teamMembers = [],
   onTicketCreated,
 }) => {
+  const activeLead = propLead || initialLead;
+  const leadOptions = myLeads.length > 0 ? myLeads : availableLeads;
+
   const [selectedLeadId, setSelectedLeadId] = useState<string>('');
   const [selectedReason, setSelectedReason] = useState<AssistanceReason>('high_workload');
   const [notes, setNotes] = useState('');
@@ -83,12 +91,12 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
   const [allTeammates, setAllTeammates] = useState<User[]>([]);
 
   useEffect(() => {
-    if (propLead) {
-      setSelectedLeadId(propLead.id);
-    } else if (myLeads.length > 0 && !selectedLeadId) {
-      setSelectedLeadId(myLeads[0].id);
+    if (activeLead) {
+      setSelectedLeadId(activeLead.id);
+    } else if (leadOptions.length > 0 && !selectedLeadId) {
+      setSelectedLeadId(leadOptions[0].id);
     }
-  }, [propLead, myLeads, selectedLeadId]);
+  }, [activeLead, leadOptions, selectedLeadId]);
 
   // Load teammates if not provided
   useEffect(() => {
@@ -159,7 +167,9 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
     }
   };
 
-  return (
+  if (!isOpen) return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="w-full max-w-lg bg-[#FAF8F5] border border-stone-200 rounded-2xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
         {/* Header */}
@@ -203,16 +213,16 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
             <label className="block text-xs font-bold text-stone-700 mb-1.5">
               Prospect / Lead to Hand Over <span className="text-red-500">*</span>
             </label>
-            {propLead ? (
+            {activeLead ? (
               <div className="p-3 rounded-xl bg-white border border-stone-200 shadow-2xs flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-bold text-stone-900">{propLead.name}</div>
+                  <div className="text-xs font-bold text-stone-900">{activeLead.name}</div>
                   <div className="text-[11px] text-stone-500">
-                    {propLead.company || 'Direct Contact'} • {propLead.phone}
+                    {activeLead.company || activeLead.business_info || 'Direct Contact'} • {activeLead.phone}
                   </div>
                 </div>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 border border-stone-200">
-                  {propLead.status}
+                  {activeLead.status}
                 </span>
               </div>
             ) : (
@@ -223,9 +233,9 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
                 required
               >
                 <option value="">-- Select a Lead --</option>
-                {myLeads.map((l) => (
+                {leadOptions.map((l) => (
                   <option key={l.id} value={l.id}>
-                    {l.name} {l.company ? `(${l.company})` : ''} - {l.phone}
+                    {l.name} {l.company || l.business_info ? `(${l.company || l.business_info})` : ''} - {l.phone}
                   </option>
                 ))}
               </select>
@@ -334,6 +344,7 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

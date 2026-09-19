@@ -1208,9 +1208,9 @@ export const AssignedDirectivesView: React.FC<AssignedDirectivesViewProps> = ({
                         </div>
                         {t.lead_priority && (
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                            t.lead_priority === 'urgent'
+                            String(t.lead_priority).toLowerCase() === 'urgent'
                               ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                              : t.lead_priority === 'high'
+                              : String(t.lead_priority).toLowerCase() === 'high'
                               ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : 'bg-stone-200 text-stone-700'
                           }`}>

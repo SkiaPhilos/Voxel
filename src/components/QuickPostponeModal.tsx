@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, Clock, X, Check, ArrowRight } from 'lucide-react';
 import type { Lead } from '../types';
 import { toDatetimeLocal, fromDatetimeLocal } from '../lib/dateUtils';
@@ -84,9 +85,10 @@ export const QuickPostponeModal: React.FC<QuickPostponeModalProps> = ({
     await handleSelectIso(iso);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="w-full max-w-md bg-[#FAF8F5] border border-stone-200 rounded-2xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-150">
+  return typeof document !== 'undefined'
+    ? createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-[#FAF8F5] border border-stone-200 rounded-2xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-200 bg-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -163,6 +165,7 @@ export const QuickPostponeModal: React.FC<QuickPostponeModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
-  );
+    </div>,
+    document.body
+  ) : null;
 };

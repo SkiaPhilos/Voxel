@@ -2623,13 +2623,24 @@ app.get('/api/admin/gemini-config', requireAuth, requireAdmin, (req, res) => {
 });
 
 // POST /api/admin/gemini-config (Admin only)
-app.post('/api/admin/gemini-config', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/gemini-config', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { apiKey, model } = req.body;
+    const { apiKey, model, verify = true } = req.body;
     const config = updateAdminGeminiConfig({ apiKey, model });
+
+    let verification = null;
+    if (verify && config.configured) {
+      verification = await testAdminGeminiConfig({ model: config.model });
+    }
+
     return res.json({
       config,
-      message: 'Gemini settings saved successfully! New configuration is now active for all users.',
+      verification,
+      message: verification?.success
+        ? `Gemini settings saved and verified! Connected to ${config.model} (${verification.latencyMs}ms).`
+        : verification
+        ? `Settings saved, but Google API verification failed: ${verification.message}`
+        : 'Gemini settings saved successfully! New configuration is now active.',
     });
   } catch (err: any) {
     console.error('Failed to update Gemini config:', err);

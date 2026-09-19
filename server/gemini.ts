@@ -102,6 +102,8 @@ export function getAdminGeminiConfig(): AdminGeminiConfig {
   return {
     hasApiKey,
     keyPreview,
+    configured: hasApiKey,
+    maskedKey: keyPreview,
     model: getActiveModel(),
     source,
     availableModels: AVAILABLE_GEMINI_MODELS,
@@ -502,6 +504,7 @@ Respond with a JSON object matching this exact schema:
     else if (score >= 35) churnRisk = 'High';
     else churnRisk = 'Critical';
 
+    const config = getAdminGeminiConfig();
     return {
       leadId: lead.id,
       healthScore: score,
@@ -513,6 +516,9 @@ Respond with a JSON object matching this exact schema:
         ? parsed.decayFactors
         : [`${daysCold} days since last contact`, `Last outcome was ${lastOutcome}`],
       assessedAt: new Date().toISOString(),
+      isAiPowered: true,
+      provider: 'gemini',
+      modelUsed: config.model || 'gemini-2.5-flash',
     };
   } catch (error) {
     console.warn('Gemini lead health analysis failed, using local fallback:', error);
@@ -593,9 +599,11 @@ function fallbackAssessLeadHealth(lead: Lead, daysCold: number): LeadHealthAsses
     healthScore: score,
     category,
     churnRisk,
-    riskDiagnosis: `Account health scored at ${score}/100 based on ${daysCold} days latency and ${lastOutcome || 'pending'} outcome history.`,
+    riskDiagnosis: `Rule-based evaluation (${daysCold} days untouched, last outcome: ${lastOutcome || 'Pending'}).`,
     recommendedTactic,
     decayFactors: factors,
     assessedAt: new Date().toISOString(),
+    isAiPowered: false,
+    provider: 'heuristic',
   };
 }
