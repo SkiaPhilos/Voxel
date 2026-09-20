@@ -96,6 +96,7 @@ export const AskAssistanceView: React.FC<AskAssistanceViewProps> = ({
 
   // Filter leads assigned to current user (excluding closed or archived)
   const myAssignableLeads = useMemo(() => {
+    if (!currentUser) return [];
     return leads.filter((l) => {
       const isMine =
         l.assigned_to === currentUser.id ||
@@ -109,11 +110,12 @@ export const AskAssistanceView: React.FC<AskAssistanceViewProps> = ({
   // Load teammates
   useEffect(() => {
     let isMounted = true;
+    const currentUserId = currentUser?.id;
     const loadTeam = async () => {
       try {
         const res = await api.getManagerTeam().catch(() => null);
         if (res?.teamMembers && isMounted) {
-          setTeammates(res.teamMembers.filter((u: User) => u.id !== currentUser.id));
+          setTeammates(currentUserId ? res.teamMembers.filter((u: User) => u.id !== currentUserId) : res.teamMembers);
         }
       } catch {
         // ignore
@@ -123,10 +125,11 @@ export const AskAssistanceView: React.FC<AskAssistanceViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [currentUser.id]);
+  }, [currentUser?.id]);
 
   // Load my sent tickets
   const fetchMyTickets = async (isSilent = false) => {
+    if (!currentUser) return;
     if (!isSilent) setIsLoadingTickets(true);
     else setIsRefreshing(true);
     try {
@@ -141,8 +144,10 @@ export const AskAssistanceView: React.FC<AskAssistanceViewProps> = ({
   };
 
   useEffect(() => {
-    fetchMyTickets();
-  }, [currentUser.id]);
+    if (currentUser?.id) {
+      fetchMyTickets();
+    }
+  }, [currentUser?.id]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

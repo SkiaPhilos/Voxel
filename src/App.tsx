@@ -155,16 +155,17 @@ export default function App() {
   }, []);
 
   // 2. Fetch Leads
-  const fetchLeads = useCallback(async () => {
+  const fetchLeads = useCallback(async (isSilentParam?: boolean | React.MouseEvent) => {
+    const isSilent = typeof isSilentParam === 'boolean' ? isSilentParam : false;
     if (!currentUser) return;
-    setIsLoadingLeads(true);
+    if (!isSilent) setIsLoadingLeads(true);
     try {
       const res = await api.getLeads();
       setLeads(res.leads);
     } catch (err) {
       console.error('Failed to load leads', err);
     } finally {
-      setIsLoadingLeads(false);
+      if (!isSilent) setIsLoadingLeads(false);
     }
   }, [currentUser]);
 
@@ -192,6 +193,19 @@ export default function App() {
       setPendingTicketsCount(0);
     }
   }, [currentUser]);
+
+  // Non-aggressive 2-minute auto-refresh poll so new incoming WhatsApp leads and updates appear automatically without manual refresh
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const interval = setInterval(() => {
+      fetchLeads(true);
+      fetchPinnedComments();
+      fetchPendingTickets();
+    }, 120000); // 2 minutes
+
+    return () => clearInterval(interval);
+  }, [currentUser, fetchLeads, fetchPinnedComments, fetchPendingTickets]);
 
   const handleCommentStatusUpdated = (commentId: string, newStatus: 'acknowledged' | 'done') => {
     setPinnedComments((prev) =>
@@ -1225,39 +1239,43 @@ export default function App() {
       />
 
       {/* LEAD DETAIL SLIDE-OVER DRAWER */}
-      <LeadDetailDrawer
-        lead={selectedDetailLead}
-        isOpen={Boolean(selectedDetailLead)}
-        onClose={() => setSelectedDetailLead(null)}
-        onLogCall={(lead) => setActiveCallModalLead(lead)}
-        onUpdateLead={handleUpdateLead}
-        onArchiveLead={handleArchiveLead}
-        currentUser={currentUser}
-        onOpenReassign={(lead) => {
-          setLeadToReassign(lead);
-          setIsReassignModalOpen(true);
-        }}
-        onRequestAssistance={(lead) => {
-          setAssistanceModalLead(lead);
-          setIsAskAssistanceModalOpen(true);
-        }}
-      />
+      {selectedDetailLead && (
+        <LeadDetailDrawer
+          lead={selectedDetailLead}
+          isOpen={Boolean(selectedDetailLead)}
+          onClose={() => setSelectedDetailLead(null)}
+          onLogCall={(lead) => setActiveCallModalLead(lead)}
+          onUpdateLead={handleUpdateLead}
+          onArchiveLead={handleArchiveLead}
+          currentUser={currentUser}
+          onOpenReassign={(lead) => {
+            setLeadToReassign(lead);
+            setIsReassignModalOpen(true);
+          }}
+          onRequestAssistance={(lead) => {
+            setAssistanceModalLead(lead);
+            setIsAskAssistanceModalOpen(true);
+          }}
+        />
+      )}
 
       {/* ASK ASSISTANCE / REQUEST TAKEOVER MODAL */}
-      <AskAssistanceModal
-        isOpen={isAskAssistanceModalOpen}
-        onClose={() => {
-          setIsAskAssistanceModalOpen(false);
-          setAssistanceModalLead(null);
-        }}
-        currentUser={currentUser}
-        initialLead={assistanceModalLead}
-        availableLeads={leads}
-        teamMembers={teamMembers}
-        onTicketCreated={() => {
-          fetchPendingTickets();
-        }}
-      />
+      {currentUser && (
+        <AskAssistanceModal
+          isOpen={isAskAssistanceModalOpen}
+          onClose={() => {
+            setIsAskAssistanceModalOpen(false);
+            setAssistanceModalLead(null);
+          }}
+          currentUser={currentUser}
+          initialLead={assistanceModalLead}
+          availableLeads={leads}
+          teamMembers={teamMembers}
+          onTicketCreated={() => {
+            fetchPendingTickets();
+          }}
+        />
+      )}
 
       {/* REASSIGN LEAD MODAL (Available throughout app for Managers & Admins) */}
       {currentUser && (

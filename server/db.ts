@@ -536,6 +536,20 @@ export function cleanPhone(p: string): string {
   return p.replace(/[^0-9+]/g, '');
 }
 
+// Helper to compare phone numbers across international (+92...), country-code (92...), and domestic (03...) formats
+export function isPhoneMatch(phoneA: string, phoneB: string): boolean {
+  if (!phoneA || !phoneB) return false;
+  const cleanA = phoneA.replace(/\D/g, '');
+  const cleanB = phoneB.replace(/\D/g, '');
+  if (!cleanA || !cleanB) return false;
+  if (cleanA === cleanB) return true;
+  // Match by mobile subscriber suffix (last 9 or 10 digits)
+  if (cleanA.length >= 9 && cleanB.length >= 9) {
+    return cleanA.slice(-9) === cleanB.slice(-9);
+  }
+  return false;
+}
+
 // -----------------------------------------------------------------------------
 // USER OPERATIONS
 // -----------------------------------------------------------------------------
@@ -1083,19 +1097,14 @@ export async function getLeadById(id: string): Promise<Lead | null> {
 export async function findLeadByPhone(phone: string): Promise<Lead | null> {
   const normPhone = cleanPhone(phone);
   if (supabaseClient) {
-    const { data, error } = await supabaseClient
-      .from('leads')
-      .select('id, phone, name')
-      .maybeSingle();
-
-    // Query all to match cleaned phone digits
+    // Query all to match cleaned phone digits or domestic/international subscriber suffix
     const { data: allLeads } = await supabaseClient.from('leads').select('id, phone, name');
-    const matched = (allLeads || []).find((l) => cleanPhone(l.phone) === normPhone);
+    const matched = (allLeads || []).find((l) => isPhoneMatch(l.phone, normPhone));
     if (!matched) return null;
     return getLeadById(matched.id);
   }
 
-  const found = localStore.leads.find((l) => cleanPhone(l.phone) === normPhone);
+  const found = localStore.leads.find((l) => isPhoneMatch(l.phone, normPhone));
   if (!found) return null;
   return getLeadById(found.id);
 }

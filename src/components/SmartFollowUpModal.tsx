@@ -44,17 +44,18 @@ export const SmartFollowUpModal: React.FC<SmartFollowUpModalProps> = ({
 
   // Fetch or generate when modal opens
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && lead) {
       handleGenerateMessages(tone);
     }
-  }, [isOpen, lead.id, outcomeTag]);
+  }, [isOpen, lead?.id, outcomeTag]);
 
   const handleGenerateMessages = async (selectedTone: FollowUpTone) => {
+    if (!lead) return;
     setIsLoading(true);
     try {
       const res = await api.composeFollowUp({
-        leadName: lead.name,
-        businessInfo: lead.business_info || lead.business_notes,
+        leadName: lead.name || 'Valued Prospect',
+        businessInfo: lead.business_info || lead.business_notes || '',
         outcomeTag: (outcomeTag || 'Interested') as OutcomeTag,
         callNotes: callNotes || lead.call_logs?.[0]?.full_notes || lead.call_logs?.[0]?.summary || '',
         tone: selectedTone,
@@ -74,7 +75,7 @@ export const SmartFollowUpModal: React.FC<SmartFollowUpModalProps> = ({
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !lead) return null;
 
   const handleCopy = (text: string, fieldKey: string) => {
     navigator.clipboard.writeText(text);

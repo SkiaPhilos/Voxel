@@ -101,15 +101,16 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
   // Load teammates if not provided
   useEffect(() => {
     let isMounted = true;
+    const currentUserId = currentUser?.id;
     if (teamMembers.length > 0) {
-      setAllTeammates(teamMembers.filter((u) => u.id !== currentUser.id));
+      setAllTeammates(currentUserId ? teamMembers.filter((u) => u.id !== currentUserId) : teamMembers);
       return;
     }
     const loadTeam = async () => {
       try {
         const res = await api.getManagerTeam().catch(() => null);
         if (res?.teamMembers && isMounted) {
-          setAllTeammates(res.teamMembers.filter((u: User) => u.id !== currentUser.id));
+          setAllTeammates(currentUserId ? res.teamMembers.filter((u: User) => u.id !== currentUserId) : res.teamMembers);
         }
       } catch {
         // ignore
@@ -119,7 +120,7 @@ export const AskAssistanceModal: React.FC<AskAssistanceModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [teamMembers, currentUser.id]);
+  }, [teamMembers, currentUser?.id]);
 
   if (!isOpen) return null;
 

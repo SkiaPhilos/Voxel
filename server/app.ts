@@ -19,6 +19,7 @@ import {
   markLeadNotified,
   logNotification,
   cleanPhone,
+  isPhoneMatch,
   isUsingSupabase,
   checkDatabaseStatus,
   countUsers,
@@ -2846,11 +2847,18 @@ function extractWhatsAppPayload(body: any, params: any, query: any): ParsedInbou
   // 2. Evolution API / Baileys format
   const data = body.data || body;
   const key = data.key || body.key;
+
+  // Ignore outgoing messages sent from the WhatsApp account itself
+  if (key?.fromMe === true || data?.fromMe === true || body?.fromMe === true) {
+    return null;
+  }
+
   const rawJid = key?.remoteJid || body.from || body.phone;
 
   if (rawJid && typeof rawJid === 'string' && !rawJid.includes('@g.us')) {
     // Exclude group chats (@g.us) to only process direct 1-on-1 customer chats
     const cleanDigits = rawJid.replace('@s.whatsapp.net', '').replace(/[^\d+]/g, '');
+    const normalizedDigits = cleanDigits.startsWith('+') ? cleanDigits : `+${cleanDigits}`;
     const messageObj = data.message || body.message;
     const text =
       messageObj?.conversation ||
@@ -2862,8 +2870,8 @@ function extractWhatsAppPayload(body: any, params: any, query: any): ParsedInbou
 
     if (cleanDigits && text) {
       return {
-        senderPhone: cleanDigits,
-        senderName: data.pushName || body.pushName || undefined,
+        senderPhone: normalizedDigits,
+        senderName: data.pushName || body.pushName || key?.pushName || body.senderName || undefined,
         messageText: String(text).trim(),
         agentId: params.agentId || query.agent_id || body.instance || undefined,
         messageId: key?.id || body.id,
@@ -2876,7 +2884,8 @@ function extractWhatsAppPayload(body: any, params: any, query: any): ParsedInbou
 }
 
 async function handleInboundWhatsAppMessage(parsed: ParsedInboundWhatsApp) {
-  const normalizedPhone = cleanPhone(parsed.senderPhone);
+  const cleanedDigits = parsed.senderPhone.replace(/[^\d+]/g, '');
+  const normalizedPhone = cleanedDigits.startsWith('+') ? cleanedDigits : `+${cleanedDigits}`;
 
   // 1. Deduplication check against existing Leads
   const existingLead = await findLeadByPhone(normalizedPhone);
@@ -2902,7 +2911,7 @@ async function handleInboundWhatsAppMessage(parsed: ParsedInboundWhatsApp) {
 
   // 2. Check Potential Customers list
   const customers = await listPotentialCustomers();
-  const existingCustomer = customers.find((c) => cleanPhone(c.phone) === normalizedPhone);
+  const existingCustomer = customers.find((c) => isPhoneMatch(c.phone, normalizedPhone));
   if (existingCustomer) {
     return {
       action: 'existing_customer_matched',
@@ -2927,7 +2936,15 @@ async function handleInboundWhatsAppMessage(parsed: ParsedInboundWhatsApp) {
       targetAgent = (await findUserById(parsed.agentId)) || null;
     }
 
-    const leadName = classification.prospectName || parsed.senderName || `WhatsApp Prospect (${normalizedPhone.slice(-4)})`;
+    // Prioritize sender's real WhatsApp profile name (e.g. from Baileys pushName),
+    // then explicit name extracted from message, else fallback to formatted phone
+    const leadName =
+      (parsed.senderName && parsed.senderName.trim() && parsed.senderName !== 'Unknown')
+        ? parsed.senderName.trim()
+        : (classification.prospectName && classification.prospectName.trim())
+          ? classification.prospectName.trim()
+          : `WhatsApp Prospect (${normalizedPhone.slice(-4)})`;
+
     const leadNotes = `${classification.summary}\n\n[Initial Inbound WhatsApp Message]:\n"${parsed.messageText}"`;
 
     const newLead = await createLead({

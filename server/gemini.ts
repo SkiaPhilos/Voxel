@@ -76,6 +76,7 @@ function getGenAI(): GoogleGenAI | null {
     aiClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
+        timeout: 60000, // 60 seconds timeout (resilient to slow connections and high model demands)
         headers: {
           'User-Agent': 'aistudio-build',
         },
@@ -159,38 +160,68 @@ export async function testAdminGeminiConfig(testConfig?: { apiKey?: string; mode
   }
 
   const startTime = Date.now();
-  try {
-    const testAi = new GoogleGenAI({
-      apiKey: apiKeyToTest,
-      httpOptions: {
-        headers: { 'User-Agent': 'aistudio-build' },
-      },
-    });
+  const testAi = new GoogleGenAI({
+    apiKey: apiKeyToTest,
+    httpOptions: {
+      timeout: 60000, // 60 seconds timeout
+      headers: { 'User-Agent': 'aistudio-build' },
+    },
+  });
 
-    const response = await testAi.models.generateContent({
-      model: modelToTest,
-      contents: 'Respond with exactly: {"status":"active","ping":"pong"}',
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
+  // Attempt test call with retry on 503 high demands or 429 rate limit
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await testAi.models.generateContent({
+        model: modelToTest,
+        contents: 'Respond with exactly: {"status":"active","ping":"pong"}',
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
 
-    const latencyMs = Date.now() - startTime;
-    return {
-      success: true,
-      model: modelToTest,
-      message: `Connection successful! ${modelToTest} responded in ${latencyMs}ms.`,
-      latencyMs,
-    };
-  } catch (err: any) {
-    const latencyMs = Date.now() - startTime;
-    return {
-      success: false,
-      model: modelToTest,
-      message: err?.message || 'Connection test failed',
-      latencyMs,
-    };
+      const latencyMs = Date.now() - startTime;
+      return {
+        success: true,
+        model: modelToTest,
+        message: `Connection successful! ${modelToTest} responded in ${latencyMs}ms.`,
+        latencyMs,
+      };
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = String(err?.message || '');
+      const isOverloaded =
+        errMsg.includes('503') ||
+        errMsg.includes('high demands') ||
+        errMsg.includes('overloaded') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('429');
+
+      if (attempt < 2 && isOverloaded) {
+        // Wait 2 seconds before second attempt
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+      break;
+    }
   }
+
+  const latencyMs = Date.now() - startTime;
+  let userFriendlyMsg = lastError?.message || 'Connection test failed';
+  if (
+    userFriendlyMsg.includes('503') ||
+    userFriendlyMsg.includes('high demands') ||
+    userFriendlyMsg.includes('overloaded')
+  ) {
+    userFriendlyMsg = `Model ${modelToTest} is temporarily experiencing high demand from Google. A retry was attempted after 2s. Slow responses are normal during peaks; you can also try switching to gemini-2.5-flash.`;
+  }
+
+  return {
+    success: false,
+    model: modelToTest,
+    message: userFriendlyMsg,
+    latencyMs,
+  };
 }
 
 /**
@@ -638,7 +669,7 @@ Analyze this incoming WhatsApp message received on a sales agent's number.
 Determine whether it is a genuine commercial/sales inquiry OR a personal chat / spam / casual chit-chat.
 
 Sender Phone: ${senderPhone}
-Sender Name: ${senderName || 'Unknown'}
+Sender Name (from WhatsApp): ${senderName || 'Unknown'}
 Message Text:
 "${messageText}"
 
@@ -651,7 +682,12 @@ Respond with ONLY valid JSON:
   "extractedProductOrInterest": string | null,
   "summary": string,
   "suggestedPriority": "High" | "Normal"
-}`;
+}
+
+IMPORTANT RULES FOR "prospectName":
+- Set "prospectName" to null unless the sender EXPLICITLY wrote their own real name inside the message text (e.g. "I am Ali" or "This is Tariq").
+- NEVER hallucinate, invent, or default to generic names like "Sarah Miller", "John Doe", etc.
+- If the sender didn't state their name in the text, return null (the system will automatically use the WhatsApp profile name).`;
 
         const response = await ai.models.generateContent({
           model,
@@ -665,11 +701,22 @@ Respond with ONLY valid JSON:
         const text = response.text?.trim();
         if (text) {
           const parsed = JSON.parse(text);
+          // Filter out any potential hallucinations like Sarah Miller
+          let cleanExtractedName: string | undefined = undefined;
+          if (
+            parsed.prospectName &&
+            typeof parsed.prospectName === 'string' &&
+            !parsed.prospectName.toLowerCase().includes('sarah') &&
+            !parsed.prospectName.toLowerCase().includes('john doe')
+          ) {
+            cleanExtractedName = parsed.prospectName.trim();
+          }
+
           return {
             isBusinessInquiry: Boolean(parsed.isBusinessInquiry),
             confidenceScore: typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 0.92,
             inquiryCategory: parsed.inquiryCategory || (parsed.isBusinessInquiry ? 'service_inquiry' : 'personal_or_casual'),
-            prospectName: parsed.prospectName || senderName || undefined,
+            prospectName: cleanExtractedName || senderName || undefined,
             extractedProductOrInterest: parsed.extractedProductOrInterest || undefined,
             summary: parsed.summary || 'Inbound WhatsApp message received.',
             suggestedPriority: parsed.suggestedPriority === 'High' ? 'High' : 'Normal',
