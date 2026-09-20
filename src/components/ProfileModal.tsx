@@ -9,6 +9,11 @@ import {
   Trash2,
   Upload,
   Save,
+  MessageCircle,
+  Copy,
+  Check,
+  Sparkles,
+  Send,
 } from 'lucide-react';
 import type { User } from '../types';
 import { api } from '../lib/api';
@@ -50,7 +55,53 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [pwdSuccess, setPwdSuccess] = useState<string | null>(null);
   const [pwdError, setPwdError] = useState<string | null>(null);
 
+  // WhatsApp Webhook & AI Classifier Tester state
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [simPhone, setSimPhone] = useState('+15558901234');
+  const [simName, setSimName] = useState('Sarah Miller');
+  const [simMessage, setSimMessage] = useState('Hi! What are your rates and packages for services?');
+  const [simResult, setSimResult] = useState<any | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simError, setSimError] = useState<string | null>(null);
+
   if (!isOpen) return null;
+
+  const webhookUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/api/webhooks/whatsapp/${user.id}`
+    : `/api/webhooks/whatsapp/${user.id}`;
+
+  const handleCopyWebhook = () => {
+    navigator.clipboard.writeText(webhookUrl);
+    setCopiedWebhook(true);
+    setTimeout(() => setCopiedWebhook(false), 2000);
+  };
+
+  const handleSimulate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!simMessage.trim() || !simPhone.trim()) return;
+    setIsSimulating(true);
+    setSimError(null);
+    setSimResult(null);
+    try {
+      const res = await fetch('/api/webhooks/whatsapp/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderPhone: simPhone,
+          senderName: simName,
+          messageText: simMessage,
+          agentId: user.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Simulation failed');
+      setSimResult(data);
+    } catch (err: any) {
+      setSimError(err.message || 'Simulation failed');
+    } finally {
+      setIsSimulating(false);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -406,6 +457,183 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               </button>
             </div>
           </form>
+
+          {/* 4. WhatsApp Inbound Webhook & AI Lead Qualification */}
+          <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-600 text-white">
+                  <MessageCircle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                    WhatsApp Inbound Webhook
+                  </h3>
+                  <p className="text-[11px] text-stone-500">
+                    Optional per-agent webhook for self-hosted WhatsApp bridge
+                  </p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                Phase 2 Ready
+              </span>
+            </div>
+
+            {/* Agent's Webhook URL */}
+            <div>
+              <label className="block text-[11px] font-semibold text-stone-700 mb-1">
+                Your Dedicated Inbound Webhook URL
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={webhookUrl}
+                  className="w-full px-3 py-1.5 border border-emerald-200 rounded-xl text-[11px] font-mono bg-white text-stone-700 select-all"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyWebhook}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer flex items-center gap-1 shrink-0 ${
+                    copiedWebhook
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white hover:bg-stone-50 text-stone-800 border-stone-300'
+                  }`}
+                  title="Copy Webhook URL"
+                >
+                  {copiedWebhook ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedWebhook ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+              <p className="text-[10px] text-stone-500 mt-1">
+                Paste this URL in your self-hosted WhatsApp bridge (Evolution API) webhook config for this agent's WhatsApp instance.
+              </p>
+            </div>
+
+            {/* Interactive AI Lead Qualification Sandbox */}
+            <div className="p-3.5 rounded-xl bg-white border border-emerald-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-stone-800 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Test AI Message Qualification & Deduplication</span>
+                </span>
+                <span className="text-[10px] text-stone-400">Live Simulator</span>
+              </div>
+
+              <form onSubmit={handleSimulate} className="space-y-2.5">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-medium text-stone-600 mb-0.5">Sender Phone</label>
+                    <input
+                      type="text"
+                      value={simPhone}
+                      onChange={(e) => setSimPhone(e.target.value)}
+                      placeholder="+15551234567"
+                      className="w-full px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-stone-600 mb-0.5">Sender Name</label>
+                    <input
+                      type="text"
+                      value={simName}
+                      onChange={(e) => setSimName(e.target.value)}
+                      placeholder="Contact Name"
+                      className="w-full px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-medium text-stone-600 mb-0.5">Incoming WhatsApp Message</label>
+                  <textarea
+                    rows={2}
+                    value={simMessage}
+                    onChange={(e) => setSimMessage(e.target.value)}
+                    placeholder="Type sample message (e.g. inquiry about pricing or personal chit-chat)"
+                    className="w-full px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSimPhone('+15550001111');
+                        setSimName('Alex Johnson');
+                        setSimMessage('Hello, we need pricing for your enterprise plan for 50 users.');
+                      }}
+                      className="text-[10px] text-stone-500 hover:text-emerald-700 underline cursor-pointer"
+                    >
+                      Sample Inquiry
+                    </button>
+                    <span className="text-stone-300">•</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSimPhone('+15559998888');
+                        setSimName('Mom');
+                        setSimMessage('Hey, what time are we having dinner tonight? Love you!');
+                      }}
+                      className="text-[10px] text-stone-500 hover:text-rose-600 underline cursor-pointer"
+                    >
+                      Sample Personal
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSimulating}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>{isSimulating ? 'Evaluating AI...' : 'Test AI Evaluation'}</span>
+                  </button>
+                </div>
+              </form>
+
+              {simError && (
+                <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>{simError}</span>
+                </div>
+              )}
+
+              {simResult && (
+                <div className="p-2.5 rounded-lg bg-stone-50 border border-stone-200 space-y-1.5 text-xs animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-stone-800">Result:</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        simResult.action === 'lead_created'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : simResult.action === 'existing_lead_updated'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-stone-200 text-stone-700'
+                      }`}
+                    >
+                      {simResult.action === 'lead_created'
+                        ? '✓ Inquiry (Lead Created)'
+                        : simResult.action === 'existing_lead_updated'
+                        ? 'Deduplicated (Lead Updated)'
+                        : 'Personal/Spam (Filtered Out)'}
+                    </span>
+                  </div>
+
+                  <div className="text-[11px] text-stone-600">{simResult.message}</div>
+
+                  {simResult.classification && (
+                    <div className="text-[10px] text-stone-500 pt-1 border-t border-stone-200 flex flex-wrap gap-x-3 gap-y-1">
+                      <span>Category: <strong className="text-stone-700">{simResult.classification.inquiryCategory}</strong></span>
+                      <span>Confidence: <strong className="text-stone-700">{Math.round((simResult.classification.confidenceScore || 0) * 100)}%</strong></span>
+                      <span>AI Model: <strong className="text-stone-700">{simResult.classification.modelUsed || 'Gemini'}</strong></span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Footer */}

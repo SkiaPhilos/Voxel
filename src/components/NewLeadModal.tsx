@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, UserPlus, Phone, User, Building, Compass, Flame, AlertCircle } from 'lucide-react';
 import type { Priority } from '../types';
+import { CountryCodeSelector } from './CountryCodeSelector';
+import { getDefaultCountry, normalizePhoneToE164, Country } from '../lib/countries';
 
 interface NewLeadModalProps {
   isOpen: boolean;
@@ -21,6 +23,7 @@ export const NewLeadModal: React.FC<NewLeadModalProps> = ({
   existingPhones,
   onSubmit,
 }) => {
+  const [selectedCountry, setSelectedCountry] = useState<Country>(getDefaultCountry());
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [businessNotes, setBusinessNotes] = useState('');
@@ -40,10 +43,17 @@ export const NewLeadModal: React.FC<NewLeadModalProps> = ({
       return;
     }
 
-    const cleaned = cleanPhone(phone);
-    const duplicate = existingPhones.some((p) => cleanPhone(p) === cleaned);
+    // Smart normalize with selected country code
+    const normalized = normalizePhoneToE164(phone, selectedCountry.dialCode);
+    const cleanedDigits = normalized.replace(/\D/g, '');
+
+    const duplicate = existingPhones.some((p) => {
+      const existingNormalized = normalizePhoneToE164(p, selectedCountry.dialCode).replace(/\D/g, '');
+      return existingNormalized === cleanedDigits;
+    });
+
     if (duplicate) {
-      setError(`A lead with phone number ${phone} already exists in your CRM.`);
+      setError(`A lead with phone number ${phone} (${normalized}) already exists in your CRM.`);
       return;
     }
 
@@ -52,7 +62,7 @@ export const NewLeadModal: React.FC<NewLeadModalProps> = ({
 
     try {
       await onSubmit({
-        phone: phone.trim(),
+        phone: normalized,
         name: name.trim() || 'Unnamed Prospect',
         business_notes: businessNotes.trim(),
         source: source.trim(),
@@ -104,11 +114,21 @@ export const NewLeadModal: React.FC<NewLeadModalProps> = ({
 
           {/* Phone Number (Required & Unique) */}
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1.5 uppercase tracking-wider">
-              Phone Number <span className="text-rose-500">* (Unique)</span>
-            </label>
-            <div className="relative">
-              <Phone className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-stone-700 uppercase tracking-wider">
+                Phone Number <span className="text-rose-500">* (Unique)</span>
+              </label>
+              <span className="text-[11px] text-stone-500">
+                Country: <strong className="text-stone-700">{selectedCountry.name}</strong>
+              </span>
+            </div>
+            <div className="flex rounded-xl shadow-2xs border border-stone-300 bg-white focus-within:ring-2 focus-within:ring-amber-700 focus-within:border-amber-700 overflow-hidden">
+              <CountryCodeSelector
+                id="new-lead-country-selector"
+                value={selectedCountry.dialCode}
+                onChange={(c) => setSelectedCountry(c)}
+                variant="input-prefix"
+              />
               <input
                 id="new-lead-phone-input"
                 type="tel"
@@ -119,10 +139,13 @@ export const NewLeadModal: React.FC<NewLeadModalProps> = ({
                   setPhone(e.target.value);
                   if (error) setError(null);
                 }}
-                placeholder="+1 (555) 000-0000"
-                className="w-full pl-10 pr-4 py-2.5 bg-white border border-stone-300 rounded-xl text-stone-900 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-700 focus:border-amber-700 shadow-2xs font-mono"
+                placeholder={selectedCountry.dialCode === '+92' ? '0323 1234567 or 3231234567' : 'Enter mobile phone number'}
+                className="w-full px-3 py-2 bg-transparent text-stone-900 text-sm focus:outline-hidden font-mono"
               />
             </div>
+            <p className="text-[10px] text-stone-500 mt-1">
+              Domestic &apos;0&apos; (e.g. 0323...) is automatically converted to international {selectedCountry.dialCode} for WhatsApp and calls.
+            </p>
           </div>
 
           {/* Contact / Owner Name */}

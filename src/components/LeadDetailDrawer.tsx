@@ -23,10 +23,19 @@ import {
   Sparkles,
   MessageSquareText,
   Handshake,
+  MessageCircle,
 } from 'lucide-react';
 import type { Lead, OutcomeTag, Priority, User as UserType, PinnedComment } from '../types';
 import { formatFriendlyTime } from '../lib/dateUtils';
-import { saveLeadToContacts, formatPhoneForDialer } from '../lib/contactUtils';
+import { saveLeadToContacts, formatPhoneForDialer, getWhatsAppUrl } from '../lib/contactUtils';
+import {
+  formatPhoneDisplay,
+  normalizePhoneToE164,
+  getDefaultCountry,
+  COUNTRIES,
+  Country,
+} from '../lib/countries';
+import { CountryCodeSelector } from './CountryCodeSelector';
 import { UserAvatar } from './UserAvatar';
 import { LeadHealthBadge } from './LeadHealthBadge';
 import { SmartFollowUpModal } from './SmartFollowUpModal';
@@ -149,9 +158,20 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
     setTimeout(() => setCopiedPhone(false), 2000);
   };
 
+  const [editCountry, setEditCountry] = useState<Country>(getDefaultCountry());
+
+  const detectCountryFromPhone = (phoneStr: string): Country => {
+    if (phoneStr && phoneStr.startsWith('+')) {
+      const match = COUNTRIES.find((c) => phoneStr.startsWith(c.dialCode));
+      if (match) return match;
+    }
+    return getDefaultCountry();
+  };
+
   const startEditing = () => {
     setEditName(lead.name);
     setEditPhone(lead.phone);
+    setEditCountry(detectCountryFromPhone(lead.phone));
     setEditNotes(lead.business_notes || '');
     setEditSource(lead.source || '');
     setEditBizInfo(lead.business_info || '');
@@ -162,9 +182,10 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const handleSaveEdit = async () => {
     setIsSaving(true);
     try {
+      const normalizedPhone = normalizePhoneToE164(editPhone.trim(), editCountry.dialCode);
       await onUpdateLead(lead.id, {
         name: editName.trim(),
-        phone: editPhone.trim(),
+        phone: normalizedPhone,
         business_notes: editNotes.trim(),
         source: editSource.trim(),
         business_info: editBizInfo.trim(),
@@ -220,11 +241,22 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                     <h2 className="text-xl font-bold text-stone-900">{lead.name}</h2>
                     <div className="flex items-center gap-3 mt-1.5 text-xs">
                       <a
-                        href={`tel:${lead.phone}`}
+                        href={`tel:${formatPhoneForDialer(lead.phone)}`}
                         className="font-mono text-stone-700 hover:text-amber-700 font-medium flex items-center gap-1"
+                        title={lead.phone}
                       >
                         <Phone className="w-3.5 h-3.5 text-amber-700" />
-                        <span>{lead.phone}</span>
+                        <span>{formatPhoneDisplay(lead.phone)}</span>
+                      </a>
+                      <a
+                        href={getWhatsAppUrl(lead.phone)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200 transition-colors cursor-pointer"
+                        title="Chat on WhatsApp"
+                      >
+                        <MessageCircle className="w-3 h-3 fill-emerald-600/20" />
+                        <span>WhatsApp</span>
                       </a>
                       {lead.source && (
                         <span className="text-stone-500 flex items-center gap-1">
@@ -307,12 +339,21 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                   </div>
                   <div>
                     <label className="text-[11px] font-semibold text-stone-600 block mb-1">Phone</label>
-                    <input
-                      type="text"
-                      value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-xs font-mono"
-                    />
+                    <div className="flex rounded-lg border border-stone-300 bg-white overflow-hidden focus-within:ring-1 focus-within:ring-amber-700">
+                      <CountryCodeSelector
+                        id="drawer-country-selector"
+                        value={editCountry.dialCode}
+                        onChange={(c) => setEditCountry(c)}
+                        variant="input-prefix"
+                      />
+                      <input
+                        type="text"
+                        value={editPhone}
+                        onChange={(e) => setEditPhone(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-transparent text-xs font-mono focus:outline-hidden"
+                        placeholder="0323 1234567"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -387,6 +428,18 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
               >
                 <Phone className="w-4 h-4" />
                 <span>Call Now</span>
+              </a>
+
+              <a
+                id="drawer-whatsapp-btn"
+                href={getWhatsAppUrl(lead.phone)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                title="Chat on WhatsApp (App on mobile, Web/Desktop on PC)"
+              >
+                <MessageCircle className="w-4 h-4 fill-white/20" />
+                <span>WhatsApp</span>
               </a>
 
               <button

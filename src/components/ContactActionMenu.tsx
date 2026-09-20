@@ -1,7 +1,7 @@
 // src/components/ContactActionMenu.tsx
 import React, { useState } from 'react';
-import { Phone, UserPlus, MessageSquare, Copy, Check, ExternalLink } from 'lucide-react';
-import { saveLeadToContacts, formatPhoneForDialer } from '../lib/contactUtils';
+import { Phone, UserPlus, MessageSquare, MessageCircle, Copy, Check, ExternalLink } from 'lucide-react';
+import { saveLeadToContacts, formatPhoneForDialer, getWhatsAppUrl } from '../lib/contactUtils';
 import type { ContactInfo } from '../lib/contactUtils';
 
 interface ContactActionMenuProps {
@@ -20,6 +20,7 @@ export const ContactActionMenu: React.FC<ContactActionMenuProps> = ({
   const [copied, setCopied] = useState(false);
   const [savedContact, setSavedContact] = useState(false);
   const cleanPhone = formatPhoneForDialer(contact.phone);
+  const whatsappUrl = getWhatsAppUrl(contact.phone);
 
   const handleCopyPhone = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -40,7 +41,7 @@ export const ContactActionMenu: React.FC<ContactActionMenuProps> = ({
   };
 
   return (
-    <div className={`inline-flex items-center gap-1 ${className}`}>
+    <div className={`inline-flex items-center gap-1.5 flex-wrap ${className}`}>
       {/* Direct Native Call / Dial link */}
       <a
         id={`quick-dial-${cleanPhone}`}
@@ -55,6 +56,24 @@ export const ContactActionMenu: React.FC<ContactActionMenuProps> = ({
       >
         <Phone className={size === 'sm' ? 'w-3.5 h-3.5 text-amber-700' : 'w-4 h-4 text-white'} />
         {showPhoneLabel && <span>{contact.phone}</span>}
+      </a>
+
+      {/* Direct WhatsApp Chat link (App on mobile, Web/Desktop on PC) */}
+      <a
+        id={`quick-whatsapp-${cleanPhone}`}
+        href={whatsappUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className={`inline-flex items-center gap-1.5 font-medium rounded-lg transition-colors border shadow-2xs cursor-pointer ${
+          size === 'sm'
+            ? 'px-2.5 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+            : 'px-3.5 py-2 text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 font-bold shadow-xs'
+        }`}
+        title="Chat on WhatsApp (App on mobile, Web/Desktop on PC)"
+      >
+        <MessageCircle className={size === 'sm' ? 'w-3.5 h-3.5 fill-white/20' : 'w-4 h-4 fill-white/20'} />
+        <span>WhatsApp</span>
       </a>
 
       {/* Save to Phone Contacts Button */}

@@ -14,10 +14,18 @@ import {
   CheckCircle2,
   RefreshCw,
   X,
+  MessageCircle,
 } from 'lucide-react';
 import type { PotentialCustomer, User } from '../types';
 import { api } from '../lib/api';
-import { formatPhoneForDialer } from '../lib/contactUtils';
+import { formatPhoneForDialer, getWhatsAppUrl } from '../lib/contactUtils';
+import {
+  formatPhoneDisplay,
+  normalizePhoneToE164,
+  getDefaultCountry,
+  Country,
+} from '../lib/countries';
+import { CountryCodeSelector } from './CountryCodeSelector';
 
 interface PotentialCustomersViewProps {
   currentUser: User;
@@ -36,6 +44,7 @@ export const PotentialCustomersView: React.FC<PotentialCustomersViewProps> = ({
 
   // New Customer Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newCustomerCountry, setNewCustomerCountry] = useState<Country>(getDefaultCountry());
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newInterest, setNewInterest] = useState('');
@@ -72,9 +81,10 @@ export const PotentialCustomersView: React.FC<PotentialCustomersViewProps> = ({
     setModalError(null);
 
     try {
+      const normalizedPhone = normalizePhoneToE164(newPhone.trim(), newCustomerCountry.dialCode);
       const res = await api.createPotentialCustomer({
         name: newName.trim(),
-        phone: newPhone.trim(),
+        phone: normalizedPhone,
         product_interest: newInterest.trim(),
         email: newEmail.trim() || undefined,
         source: newSource.trim() || undefined,
@@ -248,6 +258,16 @@ export const PotentialCustomersView: React.FC<PotentialCustomersViewProps> = ({
                         >
                           <Phone className="w-3 h-3 text-stone-400" />
                           <span>{customer.phone}</span>
+                        </a>
+                        <a
+                          href={getWhatsAppUrl(customer.phone)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-200 transition-colors font-medium text-[10px]"
+                          title="Chat on WhatsApp (App on mobile, Web/Desktop on PC)"
+                        >
+                          <MessageCircle className="w-3 h-3 fill-emerald-600/20" />
+                          <span>WhatsApp</span>
                         </a>
                         {customer.email && (
                           <a

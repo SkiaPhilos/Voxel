@@ -607,3 +607,131 @@ function fallbackAssessLeadHealth(lead: Lead, daysCold: number): LeadHealthAsses
     provider: 'heuristic',
   };
 }
+
+export interface WhatsAppInquiryClassification {
+  isBusinessInquiry: boolean;
+  confidenceScore: number;
+  inquiryCategory: 'pricing' | 'service_inquiry' | 'consultation' | 'general_question' | 'support' | 'personal_or_casual' | 'spam';
+  prospectName?: string;
+  extractedProductOrInterest?: string;
+  summary: string;
+  suggestedPriority: 'High' | 'Normal';
+  isAiPowered: boolean;
+  modelUsed?: string;
+}
+
+export async function classifyInboundWhatsAppMessage(params: {
+  senderPhone: string;
+  senderName?: string;
+  messageText: string;
+}): Promise<WhatsAppInquiryClassification> {
+  const { senderPhone, senderName, messageText } = params;
+  const apiKey = getActiveApiKey();
+  const model = getActiveModel();
+
+  if (apiKey) {
+    try {
+      const ai = getGenAI();
+      if (ai) {
+        const prompt = `You are an elite B2B/B2C Inbound Sales Lead Classifier for a CRM.
+Analyze this incoming WhatsApp message received on a sales agent's number.
+Determine whether it is a genuine commercial/sales inquiry OR a personal chat / spam / casual chit-chat.
+
+Sender Phone: ${senderPhone}
+Sender Name: ${senderName || 'Unknown'}
+Message Text:
+"${messageText}"
+
+Respond with ONLY valid JSON:
+{
+  "isBusinessInquiry": boolean,
+  "confidenceScore": number,
+  "inquiryCategory": "pricing" | "service_inquiry" | "consultation" | "general_question" | "support" | "personal_or_casual" | "spam",
+  "prospectName": string | null,
+  "extractedProductOrInterest": string | null,
+  "summary": string,
+  "suggestedPriority": "High" | "Normal"
+}`;
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        });
+
+        const text = response.text?.trim();
+        if (text) {
+          const parsed = JSON.parse(text);
+          return {
+            isBusinessInquiry: Boolean(parsed.isBusinessInquiry),
+            confidenceScore: typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 0.92,
+            inquiryCategory: parsed.inquiryCategory || (parsed.isBusinessInquiry ? 'service_inquiry' : 'personal_or_casual'),
+            prospectName: parsed.prospectName || senderName || undefined,
+            extractedProductOrInterest: parsed.extractedProductOrInterest || undefined,
+            summary: parsed.summary || 'Inbound WhatsApp message received.',
+            suggestedPriority: parsed.suggestedPriority === 'High' ? 'High' : 'Normal',
+            isAiPowered: true,
+            modelUsed: model,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('Gemini WhatsApp inquiry classification error, falling back to heuristics:', err);
+    }
+  }
+
+  return classifyInboundWhatsAppHeuristic(senderPhone, senderName, messageText);
+}
+
+function classifyInboundWhatsAppHeuristic(
+  senderPhone: string,
+  senderName: string | undefined,
+  messageText: string
+): WhatsAppInquiryClassification {
+  const lower = messageText.toLowerCase();
+
+  const businessKeywords = [
+    'price', 'pricing', 'cost', 'quote', 'quotation', 'rate', 'rates',
+    'service', 'services', 'demo', 'package', 'packages', 'offer',
+    'interested', 'inquiry', 'enquiry', 'details', 'buy', 'order', 'purchase',
+    'hire', 'consultation', 'consult', 'appointment', 'schedule', 'available',
+    'how much', 'catalog', 'catalogue', 'brochure', 'discount', 'deal',
+    'help with', 'looking for', 'need a', 'requirement', 'features', 'commercial'
+  ];
+
+  const personalKeywords = [
+    'mom', 'dad', 'bro', 'brother', 'sis', 'sister', 'wife', 'husband',
+    'dinner', 'lunch', 'breakfast', 'tonight', 'party', 'home', 'sleep',
+    'love you', 'miss you', 'haha', 'lol', 'rofl', 'hang out', 'movie',
+    'are you free tonight', 'what are you doing'
+  ];
+
+  let businessMatches = 0;
+  for (const kw of businessKeywords) {
+    if (lower.includes(kw)) businessMatches++;
+  }
+
+  let personalMatches = 0;
+  for (const kw of personalKeywords) {
+    if (lower.includes(kw)) personalMatches++;
+  }
+
+  const isBusiness = businessMatches > 0 && personalMatches === 0;
+
+  return {
+    isBusinessInquiry: isBusiness,
+    confidenceScore: isBusiness ? 0.75 : (personalMatches > 0 ? 0.85 : 0.5),
+    inquiryCategory: isBusiness ? 'service_inquiry' : (personalMatches > 0 ? 'personal_or_casual' : 'general_question'),
+    prospectName: senderName || undefined,
+    extractedProductOrInterest: isBusiness ? 'Sales / Product Inquiry' : undefined,
+    summary: isBusiness
+      ? `Inbound business inquiry detected: "${messageText.slice(0, 90)}..."`
+      : `Casual or personal message: "${messageText.slice(0, 90)}..."`,
+    suggestedPriority: businessMatches >= 2 ? 'High' : 'Normal',
+    isAiPowered: false,
+    modelUsed: 'heuristic',
+  };
+}

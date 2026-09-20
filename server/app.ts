@@ -83,6 +83,7 @@ import {
   getAdminGeminiConfig,
   updateAdminGeminiConfig,
   testAdminGeminiConfig,
+  classifyInboundWhatsAppMessage,
 } from './gemini.js';
 
 dotenv.config();
@@ -2812,6 +2813,220 @@ app.get('/api/manager/leaderboard', requireAuth, async (req, res) => {
     console.error('Leaderboard calculation failed:', err);
     return res.status(500).json({ error: err?.message || 'Failed to fetch leaderboard' });
   }
+});
+
+// ==========================================
+// WHATSAPP INBOUND WEBHOOK & AI CLASSIFICATION
+// ==========================================
+
+interface ParsedInboundWhatsApp {
+  senderPhone: string;
+  senderName?: string;
+  messageText: string;
+  agentId?: string;
+  messageId?: string;
+  timestamp?: string;
+}
+
+function extractWhatsAppPayload(body: any, params: any, query: any): ParsedInboundWhatsApp | null {
+  if (!body) return null;
+
+  // 1. Direct CRM payload format
+  if (body.senderPhone && body.messageText) {
+    return {
+      senderPhone: String(body.senderPhone).replace(/[^\d+]/g, ''),
+      senderName: body.senderName ? String(body.senderName).trim() : undefined,
+      messageText: String(body.messageText).trim(),
+      agentId: body.agentId || params.agentId || query.agent_id || undefined,
+      messageId: body.messageId,
+      timestamp: body.timestamp || new Date().toISOString(),
+    };
+  }
+
+  // 2. Evolution API / Baileys format
+  const data = body.data || body;
+  const key = data.key || body.key;
+  const rawJid = key?.remoteJid || body.from || body.phone;
+
+  if (rawJid && typeof rawJid === 'string' && !rawJid.includes('@g.us')) {
+    // Exclude group chats (@g.us) to only process direct 1-on-1 customer chats
+    const cleanDigits = rawJid.replace('@s.whatsapp.net', '').replace(/[^\d+]/g, '');
+    const messageObj = data.message || body.message;
+    const text =
+      messageObj?.conversation ||
+      messageObj?.extendedTextMessage?.text ||
+      messageObj?.imageMessage?.caption ||
+      data.body ||
+      body.body ||
+      '';
+
+    if (cleanDigits && text) {
+      return {
+        senderPhone: cleanDigits,
+        senderName: data.pushName || body.pushName || undefined,
+        messageText: String(text).trim(),
+        agentId: params.agentId || query.agent_id || body.instance || undefined,
+        messageId: key?.id || body.id,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  return null;
+}
+
+async function handleInboundWhatsAppMessage(parsed: ParsedInboundWhatsApp) {
+  const normalizedPhone = cleanPhone(parsed.senderPhone);
+
+  // 1. Deduplication check against existing Leads
+  const existingLead = await findLeadByPhone(normalizedPhone);
+  if (existingLead) {
+    const logNote = `[Inbound WhatsApp]: "${parsed.messageText}"`;
+    await addCallLog({
+      leadId: existingLead.id,
+      summary: 'Inbound WhatsApp message received',
+      full_notes: logNote,
+      outcome_tag: 'Other',
+      logged_by: existingLead.assigned_to || 'system',
+      logged_by_name: existingLead.assigned_to_name || 'WhatsApp Bridge',
+    });
+
+    return {
+      action: 'existing_lead_updated',
+      leadId: existingLead.id,
+      leadName: existingLead.name,
+      deduplicated: true,
+      message: 'Phone number already exists in CRM. Inbound message was appended to call logs.',
+    };
+  }
+
+  // 2. Check Potential Customers list
+  const customers = await listPotentialCustomers();
+  const existingCustomer = customers.find((c) => cleanPhone(c.phone) === normalizedPhone);
+  if (existingCustomer) {
+    return {
+      action: 'existing_customer_matched',
+      customerId: existingCustomer.id,
+      customerName: existingCustomer.name,
+      deduplicated: true,
+      message: 'Phone number matches a known Potential Customer record.',
+    };
+  }
+
+  // 3. Not in DB -> Run Silent Gemini AI Inquiry Classifier
+  const classification = await classifyInboundWhatsAppMessage({
+    senderPhone: normalizedPhone,
+    senderName: parsed.senderName,
+    messageText: parsed.messageText,
+  });
+
+  // 4. Decision: If Business Inquiry -> Create Lead!
+  if (classification.isBusinessInquiry) {
+    let targetAgent: User | null = null;
+    if (parsed.agentId) {
+      targetAgent = (await findUserById(parsed.agentId)) || null;
+    }
+
+    const leadName = classification.prospectName || parsed.senderName || `WhatsApp Prospect (${normalizedPhone.slice(-4)})`;
+    const leadNotes = `${classification.summary}\n\n[Initial Inbound WhatsApp Message]:\n"${parsed.messageText}"`;
+
+    const newLead = await createLead({
+      name: leadName,
+      phone: normalizedPhone,
+      business_notes: leadNotes,
+      priority: classification.suggestedPriority || 'Normal',
+      source: 'WhatsApp Inbound',
+      assignedTo: targetAgent ? targetAgent.id : undefined,
+    });
+
+    return {
+      action: 'lead_created',
+      leadId: newLead.id,
+      leadName: newLead.name,
+      deduplicated: false,
+      assignedTo: targetAgent ? targetAgent.name : 'Unassigned Pool',
+      classification,
+      message: `AI identified as genuine ${classification.inquiryCategory} inquiry. New Lead created automatically!`,
+    };
+  }
+
+  // 5. If Personal / Spam / Casual -> Filter out
+  return {
+    action: 'filtered_personal_or_spam',
+    deduplicated: false,
+    classification,
+    message: `Message evaluated as ${classification.inquiryCategory} (${classification.summary}). Filtered out from CRM leads.`,
+  };
+}
+
+// Inbound webhook receiver (supports both universal /api/webhooks/whatsapp and per-agent /api/webhooks/whatsapp/:agentId)
+app.post(['/api/webhooks/whatsapp', '/api/webhooks/whatsapp/:agentId'], async (req, res) => {
+  try {
+    const parsed = extractWhatsAppPayload(req.body, req.params, req.query);
+    if (!parsed) {
+      return res.status(400).json({
+        error: 'Invalid WhatsApp webhook payload. Expected senderPhone & messageText, or Evolution API messages.upsert format.',
+      });
+    }
+
+    const result = await handleInboundWhatsAppMessage(parsed);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error('WhatsApp webhook processing error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to process WhatsApp webhook' });
+  }
+});
+
+// Inbound webhook simulation for testing from UI
+app.post('/api/webhooks/whatsapp/simulate', async (req, res) => {
+  try {
+    const { senderPhone, senderName, messageText, agentId } = req.body;
+    if (!senderPhone || !messageText) {
+      return res.status(400).json({ error: 'senderPhone and messageText are required.' });
+    }
+
+    const parsed: ParsedInboundWhatsApp = {
+      senderPhone: String(senderPhone).trim(),
+      senderName: senderName ? String(senderName).trim() : undefined,
+      messageText: String(messageText).trim(),
+      agentId: agentId || undefined,
+      timestamp: new Date().toISOString(),
+    };
+
+    const result = await handleInboundWhatsAppMessage(parsed);
+    return res.json({ success: true, simulated: true, ...result });
+  } catch (err: any) {
+    console.error('WhatsApp webhook simulation error:', err);
+    return res.status(500).json({ error: err?.message || 'Simulation failed' });
+  }
+});
+
+// Webhook documentation & info endpoint
+app.get('/api/webhooks/whatsapp/info', (req, res) => {
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol;
+  const baseUrl = `${protocol}://${host}`;
+
+  return res.json({
+    service: 'ColdCall CRM WhatsApp Webhook Engine',
+    universalEndpoint: `${baseUrl}/api/webhooks/whatsapp`,
+    agentEndpointTemplate: `${baseUrl}/api/webhooks/whatsapp/:agentId`,
+    supportedPayloads: [
+      {
+        format: 'Direct JSON',
+        schema: {
+          senderPhone: '+15551234567',
+          senderName: 'John Doe',
+          messageText: 'Hello, what are your rates for commercial cleaning?',
+          agentId: 'optional_agent_id',
+        },
+      },
+      {
+        format: 'Evolution API / Baileys webhook',
+        event: 'messages.upsert',
+      },
+    ],
+  });
 });
 
 // Health check endpoints for Vercel and monitoring

@@ -1,5 +1,19 @@
 // src/lib/contactUtils.ts
 // Utility for exporting leads directly to native phone Contacts via vCard 3.0 or Web Share API
+import {
+  normalizePhoneToE164,
+  formatPhoneForWhatsApp as formatWhatsAppClean,
+  getDefaultCountry,
+} from './countries';
+
+export {
+  COUNTRIES,
+  getDefaultCountry,
+  setDefaultCountryCode,
+  normalizePhoneToE164,
+  formatPhoneDisplay,
+} from './countries';
+export type { Country } from './countries';
 
 export interface ContactInfo {
   name: string;
@@ -10,10 +24,35 @@ export interface ContactInfo {
 }
 
 /**
- * Format a phone number cleanly for tel: and vCard
+ * Format a phone number cleanly for tel: and vCard.
+ * Resolves domestic leading '0' with default country code if needed.
  */
-export function formatPhoneForDialer(phone: string): string {
-  return phone.replace(/[^\d+]/g, '');
+export function formatPhoneForDialer(phone: string, defaultCountryDialCode?: string): string {
+  if (!phone) return '';
+  const e164 = normalizePhoneToE164(phone, defaultCountryDialCode);
+  return e164;
+}
+
+/**
+ * Format a phone number for WhatsApp wa.me universal deep links.
+ * Resolves domestic leading '0' (e.g. 03234234234 with +92 becomes 923234234234).
+ */
+export function formatPhoneForWhatsApp(phone: string, defaultCountryDialCode?: string): string {
+  return formatWhatsAppClean(phone, defaultCountryDialCode);
+}
+
+/**
+ * Generates the universal WhatsApp URL that opens the native WhatsApp app
+ * on mobile (Android/iOS) and WhatsApp Web / Desktop app on PC/Mac.
+ * Correctly replaces domestic leading zero with international country code.
+ */
+export function getWhatsAppUrl(phone: string, text?: string, defaultCountryDialCode?: string): string {
+  const cleanPhone = formatWhatsAppClean(phone, defaultCountryDialCode);
+  const base = `https://wa.me/${cleanPhone}`;
+  if (text) {
+    return `${base}?text=${encodeURIComponent(text)}`;
+  }
+  return base;
 }
 
 /**
