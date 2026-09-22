@@ -2845,34 +2845,111 @@ function extractWhatsAppPayload(body: any, params: any, query: any): ParsedInbou
   }
 
   // 2. Evolution API / Baileys format
-  const data = body.data || body;
-  const key = data.key || body.key;
+  // Note: Evolution API can send body.data as an Array or as an Object
+  let data = body.data;
+  if (Array.isArray(data) && data.length > 0) {
+    data = data[0];
+  } else if (!data) {
+    data = body;
+  }
+
+  const key = data?.key || body?.key;
 
   // Ignore outgoing messages sent from the WhatsApp account itself
   if (key?.fromMe === true || data?.fromMe === true || body?.fromMe === true) {
     return null;
   }
 
-  const rawJid = key?.remoteJid || body.from || body.phone;
+  const rawJid = key?.remoteJid || data?.remoteJid || body?.from || body?.phone || data?.sender;
 
-  if (rawJid && typeof rawJid === 'string' && !rawJid.includes('@g.us')) {
-    // Exclude group chats (@g.us) to only process direct 1-on-1 customer chats
-    const cleanDigits = rawJid.replace('@s.whatsapp.net', '').replace(/[^\d+]/g, '');
+  if (rawJid && typeof rawJid === 'string') {
+    // Exclude group chats (@g.us) and status broadcasts to only process direct 1-on-1 customer chats
+    if (rawJid.includes('@g.us') || rawJid.includes('@broadcast') || rawJid.includes('status@')) {
+      return null;
+    }
+
+    // Clean JID: remove @s.whatsapp.net, @c.us, and multi-device suffixes like :12
+    const cleanJid = rawJid.split('@')[0].split(':')[0];
+    const cleanDigits = cleanJid.replace(/[^\d]/g, '');
+    if (!cleanDigits) return null;
+
     const normalizedDigits = cleanDigits.startsWith('+') ? cleanDigits : `+${cleanDigits}`;
-    const messageObj = data.message || body.message;
-    const text =
-      messageObj?.conversation ||
-      messageObj?.extendedTextMessage?.text ||
-      messageObj?.imageMessage?.caption ||
-      data.body ||
-      body.body ||
-      '';
+    const messageObj = data?.message || body?.message || data;
 
-    if (cleanDigits && text) {
+    // 1. Detect media messages (Screenshots, Images, Videos, Documents)
+    const imageMsg = messageObj?.imageMessage || (data?.messageType === 'imageMessage' ? data : null);
+    const videoMsg = messageObj?.videoMessage || (data?.messageType === 'videoMessage' ? data : null);
+    const docMsg = messageObj?.documentMessage || (data?.messageType === 'documentMessage' ? data : null);
+
+    let text = '';
+
+    if (imageMsg) {
+      const caption = imageMsg.caption ? String(imageMsg.caption).trim() : '';
+      text = caption
+        ? `[Screenshot / Image Attached]: "${caption}"`
+        : '[Screenshot / Image Attached] (Inquiry on shared visual post)';
+    } else if (videoMsg) {
+      const caption = videoMsg.caption ? String(videoMsg.caption).trim() : '';
+      text = caption ? `[Video Attached]: "${caption}"` : '[Inbound WhatsApp Video]';
+    } else if (docMsg) {
+      const caption = docMsg.caption ? String(docMsg.caption).trim() : '';
+      const fileName = docMsg.fileName || 'Attachment';
+      text = caption ? `[Document Attached: ${fileName}]: "${caption}"` : `[Document Attached: ${fileName}]`;
+    } else {
+      // 2. Standard text messages & interactive responses
+      text =
+        messageObj?.conversation ||
+        messageObj?.extendedTextMessage?.text ||
+        messageObj?.buttonsResponseMessage?.selectedDisplayText ||
+        messageObj?.buttonsResponseMessage?.selectedButtonId ||
+        messageObj?.templateButtonReplyMessage?.selectedDisplayText ||
+        messageObj?.templateButtonReplyMessage?.selectedId ||
+        messageObj?.listResponseMessage?.title ||
+        messageObj?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        data?.body ||
+        body?.body ||
+        body?.text ||
+        '';
+    }
+
+    // 3. Detect Ad / CTA referral context (Click-to-WhatsApp Ads from Facebook/Instagram)
+    const externalAdReply =
+      messageObj?.extendedTextMessage?.contextInfo?.externalAdReply ||
+      data?.contextInfo?.externalAdReply;
+    if (externalAdReply) {
+      const adTitle = externalAdReply.title || externalAdReply.body;
+      if (adTitle && !text.includes('[From Ad/CTA')) {
+        text = `[From Ad/CTA: ${adTitle}] ${text}`.trim();
+      }
+    }
+
+    // 4. If text is empty, check voice notes, shared locations, or contacts
+    if (!text) {
+      if (messageObj?.audioMessage || data?.messageType === 'audioMessage') {
+        text = '[Inbound WhatsApp Voice Note]';
+      } else if (messageObj?.locationMessage) {
+        const loc = messageObj.locationMessage;
+        text = `[Shared Location: ${loc.name || loc.address || `${loc.degreesLatitude}, ${loc.degreesLongitude}`}]`;
+      } else if (messageObj?.contactMessage) {
+        text = `[Shared Contact Card: ${messageObj.contactMessage.displayName || 'Contact'}]`;
+      }
+    }
+
+    const trimmedText = String(text).trim();
+
+    if (cleanDigits && trimmedText) {
+      const pushName =
+        data?.pushName ||
+        body?.pushName ||
+        key?.pushName ||
+        body?.senderName ||
+        data?.senderName ||
+        undefined;
+
       return {
         senderPhone: normalizedDigits,
-        senderName: data.pushName || body.pushName || key?.pushName || body.senderName || undefined,
-        messageText: String(text).trim(),
+        senderName: pushName ? String(pushName).trim() : undefined,
+        messageText: trimmedText,
         agentId: params.agentId || query.agent_id || body.instance || undefined,
         messageId: key?.id || body.id,
         timestamp: new Date().toISOString(),
@@ -2951,6 +3028,7 @@ async function handleInboundWhatsAppMessage(parsed: ParsedInboundWhatsApp) {
       name: leadName,
       phone: normalizedPhone,
       business_notes: leadNotes,
+      business_info: classification.extractedProductOrInterest || undefined,
       priority: classification.suggestedPriority || 'Normal',
       source: 'WhatsApp Inbound',
       assignedTo: targetAgent ? targetAgent.id : undefined,
@@ -2981,8 +3059,11 @@ app.post(['/api/webhooks/whatsapp', '/api/webhooks/whatsapp/:agentId'], async (r
   try {
     const parsed = extractWhatsAppPayload(req.body, req.params, req.query);
     if (!parsed) {
-      return res.status(400).json({
-        error: 'Invalid WhatsApp webhook payload. Expected senderPhone & messageText, or Evolution API messages.upsert format.',
+      // Return 200 OK so webhook delivery does not retry or show false errors for ignored events
+      return res.json({
+        success: true,
+        ignored: true,
+        reason: 'Event safely acknowledged (outbound message, status broadcast, group chat, or non-message payload).',
       });
     }
 

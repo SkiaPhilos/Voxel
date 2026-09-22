@@ -664,14 +664,68 @@ export async function classifyInboundWhatsAppMessage(params: {
     try {
       const ai = getGenAI();
       if (ai) {
-        const prompt = `You are an elite B2B/B2C Inbound Sales Lead Classifier for a CRM.
-Analyze this incoming WhatsApp message received on a sales agent's number.
-Determine whether it is a genuine commercial/sales inquiry OR a personal chat / spam / casual chit-chat.
+        const prompt = `You are an expert Inbound Sales Lead Classifier for a Commercial CRM (Ship Asaan / Voxel Leads — Logistics, Courier, Delivery, E-commerce COD, Rates, and B2B/B2C Services).
+Analyze this incoming WhatsApp message received on an official business/sales WhatsApp line.
+Determine whether it should be captured as an Inbound Sales Lead (isBusinessInquiry: true) or discarded (isBusinessInquiry: false).
 
 Sender Phone: ${senderPhone}
 Sender Name (from WhatsApp): ${senderName || 'Unknown'}
 Message Text:
 "${messageText}"
+
+CRITICAL RULES FOR "isBusinessInquiry" AND LEAD CATEGORIZATION:
+1. SOCIAL MEDIA SCREENSHOTS & EXPLORATORY INQUIRIES:
+   - When people take a screenshot (ss) of a post or ad they saw on social media (Facebook/Instagram/TikTok) and paste it with inquiries like:
+     "can i get more info on this", "whats this", "what is this", "ye kia he", "ye kya he", "ye kia hai", "ye kya hai", "ye kia chez hai", "is ki detail", "tell me about this", "tell me more", "how does this work", "check this", "details please", "available?", etc.
+   - ALWAYS classify as a LEAD (isBusinessInquiry: true).
+   - Set inquiryCategory: "general_question" or "service_inquiry".
+   - Set extractedProductOrInterest: "Social Post / Screenshot Inquiry".
+   - Set suggestedPriority: "Normal".
+
+2. AUTO-GENERATED CTA MESSAGES (CLICK-TO-WHATSAPP ADS & WEBSITE CTAs):
+   - Messages generated after someone clicks an ad or website CTA (e.g., "[From Ad/CTA...]", "Hi, I saw this on Facebook/Instagram...", "I want to know more about Ship Asaan", "Hi, I'm interested in your services", "Please send information").
+   - ALWAYS classify as a LEAD (isBusinessInquiry: true).
+   - Set inquiryCategory: "general_question".
+   - Set extractedProductOrInterest: "Ad Campaign / Website CTA".
+   - Set suggestedPriority: "Normal".
+
+3. RATES & PRICING INQUIRIES (INTERESTED LEADS):
+   - Inquiries asking about rates, pricing, delivery charges, COD rates, price list, tariff, cost, discounts, or weight slabs (e.g. "what are your rates?", "rates kya hain?", "charges?", "per kg price?", "rate list please").
+   - ALWAYS classify as a LEAD (isBusinessInquiry: true).
+   - Set inquiryCategory: "pricing".
+   - Set suggestedPriority: "High" (Interested, high-intent inquiry).
+   - Set extractedProductOrInterest: "Rates & Pricing".
+
+4. LONG, THOUGHT-OUT MESSAGES WITH INQUIRING WORDS:
+   - Any multi-sentence or detailed message where the prospect took the time and effort to type out a thoughtful inquiry (describing their business, parcel volume, questions, locations, requirements, or asking how the service works).
+   - A long message indicates deep buying intent!
+   - ALWAYS classify as a LEAD (isBusinessInquiry: true).
+   - Set inquiryCategory: "consultation" or "service_inquiry".
+   - Set suggestedPriority: "High" (High intent prospect who typed a detailed message).
+   - Set extractedProductOrInterest: "Detailed Commercial Inquiry".
+
+5. GREETINGS & INTRODUCTIONS:
+   - Greetings from unknown numbers ("Salam", "Assalam o alaikum", "Hi", "Hello", "AoA", "Hey") are opening contact with our business.
+   - ALWAYS classify as a LEAD (isBusinessInquiry: true, category: "general_question").
+
+6. ROMAN URDU & REGIONAL EXPRESSIONS:
+   - Recognize everyday phrases like "ye kia he", "kya rate hai", "parcel bhejna hai", "charges kitnay hain", "bhai details bhej dain", "rabta karein", "office kahan hai".
+   - ALWAYS classify as a LEAD (isBusinessInquiry: true).
+
+7. MEDIA, VOICE NOTES & ATTACHMENTS:
+   - If the message mentions a screenshot, image, voice note, document, or shared delivery location, ALWAYS set isBusinessInquiry: true.
+
+8. ONLY SET isBusinessInquiry: false IF:
+   - The message is EXPLICIT personal/family chat clearly addressed to a relative/friend (e.g. talking about dinner at home, family medicine, movies).
+   - Automated telecom SMS / carrier spam / one-time passwords.
+
+9. DEFAULT BIAS:
+   - When in doubt, ALWAYS default to isBusinessInquiry: true. It is critical never to miss a real prospect.
+
+IMPORTANT RULES FOR "prospectName":
+- Set "prospectName" to null unless the sender EXPLICITLY wrote their own real name inside the message text (e.g. "My name is Tariq" or "Mera naam Ali hai").
+- NEVER hallucinate, invent, or default to generic names like "Sarah Miller", "John Doe", etc.
+- If the sender didn't state their name in the text, return null (the system will automatically use the WhatsApp profile name).
 
 Respond with ONLY valid JSON:
 {
@@ -682,12 +736,7 @@ Respond with ONLY valid JSON:
   "extractedProductOrInterest": string | null,
   "summary": string,
   "suggestedPriority": "High" | "Normal"
-}
-
-IMPORTANT RULES FOR "prospectName":
-- Set "prospectName" to null unless the sender EXPLICITLY wrote their own real name inside the message text (e.g. "I am Ali" or "This is Tariq").
-- NEVER hallucinate, invent, or default to generic names like "Sarah Miller", "John Doe", etc.
-- If the sender didn't state their name in the text, return null (the system will automatically use the WhatsApp profile name).`;
+}`;
 
         const response = await ai.models.generateContent({
           model,
@@ -738,22 +787,95 @@ function classifyInboundWhatsAppHeuristic(
   senderName: string | undefined,
   messageText: string
 ): WhatsAppInquiryClassification {
-  const lower = messageText.toLowerCase();
+  const lower = messageText.toLowerCase().trim();
 
-  const businessKeywords = [
-    'price', 'pricing', 'cost', 'quote', 'quotation', 'rate', 'rates',
-    'service', 'services', 'demo', 'package', 'packages', 'offer',
-    'interested', 'inquiry', 'enquiry', 'details', 'buy', 'order', 'purchase',
-    'hire', 'consultation', 'consult', 'appointment', 'schedule', 'available',
-    'how much', 'catalog', 'catalogue', 'brochure', 'discount', 'deal',
-    'help with', 'looking for', 'need a', 'requirement', 'features', 'commercial'
+  // 1. Explicit Personal / Family exclusions (strictly for genuine personal chats)
+  const personalKeywords = [
+    'mom', 'dad', 'ammi', 'abbu', 'wife', 'husband', 'bhabhi', 'bhai jan',
+    'dinner at home', 'ghar kab', 'love you', 'miss you', 'tonight at home',
+    'movie tonight', 'party tonight', 'sleep well', 'wake up'
   ];
 
-  const personalKeywords = [
-    'mom', 'dad', 'bro', 'brother', 'sis', 'sister', 'wife', 'husband',
-    'dinner', 'lunch', 'breakfast', 'tonight', 'party', 'home', 'sleep',
-    'love you', 'miss you', 'haha', 'lol', 'rofl', 'hang out', 'movie',
-    'are you free tonight', 'what are you doing'
+  let personalMatches = 0;
+  for (const kw of personalKeywords) {
+    if (lower.includes(kw)) personalMatches++;
+  }
+
+  // 2. Screenshot & Social Media Exploratory Inquiries ("whats this", "ye kia he", "can i get more info on this", etc.)
+  const screenshotPhrases = [
+    'more info on this', 'can i get more info', 'more info', 'whats this', 'what is this',
+    'what is it', 'tell me about this', 'tell me more', 'how does this work',
+    'ye kia he', 'ye kya he', 'ye kia hai', 'ye kya hai', 'ye kia chez', 'ye kya chez',
+    'ye kia scene', 'kya scene hai', 'is ki detail', 'iski detail', 'is k baray me',
+    'check this', 'check please', 'available?', 'interested in this', 'ye kaisa hai',
+    'ye kitne ka', 'details please', 'need details', 'info on this'
+  ];
+
+  const hasScreenshotPhrase = screenshotPhrases.some((phrase) => lower.includes(phrase));
+  const isImageAttachment = lower.includes('[screenshot') || lower.includes('[image attached');
+
+  // 3. Auto-Generated CTA Messages (Click-to-WhatsApp Ads / Website CTA)
+  const ctaPhrases = [
+    '[from ad/cta', 'saw this on facebook', 'saw this on instagram', 'saw your ad',
+    'click to chat', 'want to know more about', 'interested in your services',
+    'came from your website', 'saw your post'
+  ];
+
+  const hasCtaPhrase = ctaPhrases.some((phrase) => lower.includes(phrase));
+
+  // 4. High-Intent Pricing & Rates Inquiries (Interested Inquiries)
+  const pricingKeywords = [
+    'price', 'pricing', 'cost', 'quote', 'quotation', 'rate', 'rates', 'charges',
+    'tariff', 'discount', 'how much', 'kya rate', 'rate kya', 'charges kya',
+    'kitnay charges', 'rates bhej', 'rate list', 'fare', 'delivery charges', 'cod charges'
+  ];
+
+  let pricingMatches = 0;
+  for (const kw of pricingKeywords) {
+    if (lower.includes(kw)) pricingMatches++;
+  }
+
+  // 5. Logistics, Courier, Delivery & Ship Asaan Keywords
+  const logisticsKeywords = [
+    'ship asaan', 'shipasaan', 'ship asan', 'courier', 'parcel', 'delivery',
+    'cod', 'cash on delivery', 'cargo', 'shipping', 'shipment', 'freight',
+    'booking', 'tracking', 'dispatch', 'rider', 'pickup', 'flyer', 'packaging',
+    'bhejna', 'deliver karna', 'bhejni', 'bhej dain', 'post', 'express'
+  ];
+
+  let logisticsMatches = 0;
+  for (const kw of logisticsKeywords) {
+    if (lower.includes(kw)) logisticsMatches++;
+  }
+
+  // 6. Long, Thought-Out Messages with Inquiring Words (Deep Buyer Intent)
+  const wordCount = messageText.trim().split(/\s+/).length;
+  const isLongMessage = messageText.length >= 50 || wordCount >= 9;
+
+  const inquiringWords = [
+    '?', 'how', 'what', 'where', 'when', 'why', 'can', 'could', 'need', 'require',
+    'want', 'help', 'looking', 'kya', 'kia', 'kaise', 'kahan', 'kab', 'chahiye',
+    'bataen', 'batao', 'details', 'service', 'rates', 'parcel', 'deliver', 'send',
+    'order', 'business', 'company', 'information', 'shipment', 'delivery', 'account',
+    'process', 'portal', 'register'
+  ];
+
+  let inquiringMatches = 0;
+  for (const iw of inquiringWords) {
+    if (lower.includes(iw)) inquiringMatches++;
+  }
+
+  const isThoughtOutLongInquiry = isLongMessage && inquiringMatches >= 2;
+
+  // 7. General Business & Onboarding Keywords
+  const businessKeywords = [
+    'service', 'services', 'demo', 'package', 'packages', 'offer', 'interested',
+    'inquiry', 'enquiry', 'details', 'buy', 'order', 'purchase', 'hire',
+    'consultation', 'consult', 'appointment', 'schedule', 'available', 'catalog',
+    'catalogue', 'brochure', 'deal', 'help with', 'looking for', 'need a',
+    'requirement', 'features', 'commercial', 'account', 'register', 'registration',
+    'portal', 'merchant', 'b2b', 'b2c', 'client', 'customer', 'maloomat', 'rabta',
+    'bhai details', 'office kahan', 'kahan se', 'call me', 'contact'
   ];
 
   let businessMatches = 0;
@@ -761,23 +883,106 @@ function classifyInboundWhatsAppHeuristic(
     if (lower.includes(kw)) businessMatches++;
   }
 
-  let personalMatches = 0;
-  for (const kw of personalKeywords) {
-    if (lower.includes(kw)) personalMatches++;
+  // 8. Inbound Greetings & Icebreakers
+  const greetingKeywords = [
+    'salam', 'assalam', 'asalam', 'aoa', 'a.o.a', 'hello', 'hi', 'hey',
+    'good morning', 'good afternoon', 'good evening', 'info', 'information',
+    'are you there', 'help', 'listen', 'bhai'
+  ];
+
+  let greetingMatches = 0;
+  for (const kw of greetingKeywords) {
+    const regex = new RegExp(`(^|\\W)${kw}(\\W|$)`, 'i');
+    if (regex.test(lower)) greetingMatches++;
   }
 
-  const isBusiness = businessMatches > 0 && personalMatches === 0;
+  // 9. Media Attachment Flags
+  const isMediaNote =
+    lower.startsWith('[inbound whatsapp') ||
+    lower.startsWith('[screenshot') ||
+    lower.startsWith('[shared location') ||
+    lower.startsWith('[shared contact') ||
+    lower.startsWith('[document');
+
+  const totalCommercialSignals =
+    pricingMatches +
+    logisticsMatches +
+    businessMatches +
+    greetingMatches +
+    (hasScreenshotPhrase ? 1 : 0) +
+    (hasCtaPhrase ? 1 : 0) +
+    (isThoughtOutLongInquiry ? 2 : 0) +
+    (isMediaNote ? 1 : 0);
+
+  // If message contains explicit personal keywords and ZERO business signals, discard
+  if (personalMatches > 0 && totalCommercialSignals === 0) {
+    return {
+      isBusinessInquiry: false,
+      confidenceScore: 0.85,
+      inquiryCategory: 'personal_or_casual',
+      prospectName: senderName || undefined,
+      summary: `Casual or personal message: "${messageText.slice(0, 90)}..."`,
+      suggestedPriority: 'Normal',
+      isAiPowered: false,
+      modelUsed: 'heuristic',
+    };
+  }
+
+  // Categorize based on intent
+  let category: WhatsAppInquiryClassification['inquiryCategory'] = 'general_question';
+  let suggestedPriority: 'High' | 'Normal' = 'Normal';
+  let extractedProductOrInterest = 'General Inquiry';
+
+  if (isThoughtOutLongInquiry) {
+    // Serious, thought-out message: high-intent lead
+    category = 'consultation';
+    suggestedPriority = 'High';
+    extractedProductOrInterest = 'Detailed Commercial Inquiry';
+  } else if (pricingMatches > 0) {
+    // Rates & pricing inquiry: high-intent lead
+    category = 'pricing';
+    suggestedPriority = 'High';
+    extractedProductOrInterest = 'Rates & Pricing';
+  } else if (hasScreenshotPhrase || isImageAttachment) {
+    // Screenshot or exploratory inquiry from social media post
+    category = 'general_question';
+    suggestedPriority = 'Normal';
+    extractedProductOrInterest = 'Social Post / Screenshot Inquiry';
+  } else if (hasCtaPhrase) {
+    // Auto-generated ad CTA
+    category = 'general_question';
+    suggestedPriority = 'Normal';
+    extractedProductOrInterest = 'Ad Campaign / Website CTA';
+  } else if (logisticsMatches > 0) {
+    category = 'service_inquiry';
+    suggestedPriority = 'Normal';
+    extractedProductOrInterest = 'Courier / Logistics Service';
+  } else if (businessMatches > 0) {
+    category = 'consultation';
+    suggestedPriority = 'Normal';
+    extractedProductOrInterest = 'Commercial Account / Consultation';
+  } else if (greetingMatches > 0) {
+    category = 'general_question';
+    suggestedPriority = 'Normal';
+    extractedProductOrInterest = 'Inbound Prospect Greeting';
+  }
 
   return {
-    isBusinessInquiry: isBusiness,
-    confidenceScore: isBusiness ? 0.75 : (personalMatches > 0 ? 0.85 : 0.5),
-    inquiryCategory: isBusiness ? 'service_inquiry' : (personalMatches > 0 ? 'personal_or_casual' : 'general_question'),
+    isBusinessInquiry: true,
+    confidenceScore: totalCommercialSignals > 0 ? 0.92 : 0.75,
+    inquiryCategory: category,
     prospectName: senderName || undefined,
-    extractedProductOrInterest: isBusiness ? 'Sales / Product Inquiry' : undefined,
-    summary: isBusiness
-      ? `Inbound business inquiry detected: "${messageText.slice(0, 90)}..."`
-      : `Casual or personal message: "${messageText.slice(0, 90)}..."`,
-    suggestedPriority: businessMatches >= 2 ? 'High' : 'Normal',
+    extractedProductOrInterest,
+    summary: isThoughtOutLongInquiry
+      ? `Thought-out detailed inquiry received: "${messageText.slice(0, 90)}..."`
+      : hasScreenshotPhrase || isImageAttachment
+        ? `Inquiry on shared screenshot/post: "${messageText.slice(0, 90)}..."`
+        : hasCtaPhrase
+          ? `Inbound inquiry from ad/website CTA: "${messageText.slice(0, 90)}..."`
+          : pricingMatches > 0
+            ? `High-intent pricing inquiry: "${messageText.slice(0, 90)}..."`
+            : `Inbound WhatsApp contact: "${messageText.slice(0, 90)}..."`,
+    suggestedPriority,
     isAiPowered: false,
     modelUsed: 'heuristic',
   };

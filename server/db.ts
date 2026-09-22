@@ -1113,6 +1113,7 @@ export async function createLead(params: {
   phone: string;
   name: string;
   business_notes?: string;
+  business_info?: string;
   source?: string;
   email?: string;
   priority?: Priority;
@@ -1127,13 +1128,13 @@ export async function createLead(params: {
       phone: params.phone.trim(),
       name: params.name?.trim() || 'Unnamed Lead',
       business_notes: params.business_notes?.trim() || '',
+      business_info: params.business_info?.trim() || '',
       source: params.source?.trim() || '',
       email: params.email?.trim() || null,
       status: 'Active',
       priority: params.priority === 'High' ? 'High' : 'Normal',
       next_action_at: null,
       last_notified_at: null,
-      business_info: '',
       created_at: nowIso,
       updated_at: nowIso,
     };
@@ -1214,7 +1215,7 @@ export async function createLead(params: {
     last_notified_at: null,
     assigned_to: params.assignedTo || undefined,
     call_logs: [],
-    business_info: '',
+    business_info: params.business_info?.trim() || '',
   };
 
   localStore.leads.unshift(newLead);
