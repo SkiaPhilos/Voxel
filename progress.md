@@ -12,12 +12,14 @@ See [addendum.md](./addendum.md) for full feature specifications and acceptance 
 | 2 | **Power Dialer (Continuous Calling Session)** | 🟢 Completed | 2026-09-16 | 2026-09-17 | Focused flow through Due Today/New leads with countdown & instant outcome logging. |
 | 3 | **In-App Objection Handling & Scripts** | 🟢 Completed | 2026-09-17 | 2026-09-17 | Objection rebuttals in call logger & power dialer; customizable in settings. |
 | 4 | **Customizable Follow-Up Cadences** | 🟢 Completed | 2026-09-17 | 2026-09-17 | Outcome-specific automatic follow-up delay configurations, manager admin UI, and auto-applied intervals. |
-| 5 | **Gemini AI: Call Note Structuring** | ⚪ Queued | — | — | Server-side Gemini `@google/genai` endpoint for structuring messy call notes. |
-| 6 | **Gemini AI: Smart Follow-Up Composer** | ⚪ Queued | — | — | Instant WhatsApp/Email/SMS tailored message generator. |
-| 7 | **Gemini AI: Lead Health & Churn Score** | ⚪ Queued | — | — | Decay analytics and risk indicators on leads. |
-| 8 | **Live Leaderboard & Activity Feed** | ⚪ Queued | — | — | Real-time daily team scoreboard and call stream. |
-| 9 | **Call Audio & Voicemail Uploads** | ⚪ Queued | — | — | Audio attachments on call records with embedded player. |
-| 10 | **Mobile Card Swipe Gestures** | ⚪ Queued | — | — | Touch swipe actions for rapid phone handling. |
+| 5 | **Mobile Ergonomics & Drawer Optimization** | 🟢 Completed | 2026-09-22 | 2026-09-22 | Fixed mobile header truncation, drawer overflow, consolidated lead card action toolbar, collapsed empty dossier blocks. |
+| 6 | **WhatsApp Inbound Pipeline & Smart Parsing** | 🟢 Completed | 2026-09-22 | 2026-09-22 | Auto-detected social screenshot inquiries, ad CTA leads, and thought-out inquiries with dedicated filter & stylized snippets. |
+| 7 | **Gemini AI: Call Note Structuring** | ⚪ Queued | — | — | Server-side Gemini `@google/genai` endpoint for structuring messy call notes. |
+| 8 | **Gemini AI: Smart Follow-Up Composer** | ⚪ Queued | — | — | Instant WhatsApp/Email/SMS tailored message generator. |
+| 9 | **Gemini AI: Lead Health & Churn Score** | ⚪ Queued | — | — | Decay analytics and risk indicators on leads. |
+| 10 | **Live Leaderboard & Activity Feed** | ⚪ Queued | — | — | Real-time daily team scoreboard and call stream. |
+| 11 | **Call Audio & Voicemail Uploads** | ⚪ Queued | — | — | Audio attachments on call records with embedded player. |
+| 12 | **Mobile Card Swipe Gestures** | ⚪ Queued | — | — | Touch swipe actions for rapid phone handling. |
 
 ---
 

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Phone,
   PhoneCall,
@@ -18,6 +18,11 @@ import {
   User as UserIcon,
   MessageSquareText,
   Handshake,
+  MessageCircle,
+  MoreVertical,
+  Check,
+  Copy,
+  UserPlus,
 } from 'lucide-react';
 import type { Lead, OutcomeTag, PinnedComment, User } from '../types';
 import { isDueNowOrOverdue, formatFriendlyTime } from '../lib/dateUtils';
@@ -27,6 +32,65 @@ import { LeadHealthBadge } from './LeadHealthBadge';
 import { SmartFollowUpModal } from './SmartFollowUpModal';
 import { QuickPostponeModal } from './QuickPostponeModal';
 import { api } from '../lib/api';
+import { formatPhoneForDialer, getWhatsAppUrl, saveLeadToContacts } from '../lib/contactUtils';
+import { formatPhoneDisplay } from '../lib/countries';
+
+function getLeadMessageDisplay(lead: Lead) {
+  // 1. Check if there are recent inbound WhatsApp messages in call_logs
+  const inboundCallLog = lead.call_logs?.find(
+    (l) =>
+      l.summary?.toLowerCase().includes('whatsapp') ||
+      l.full_notes?.toLowerCase().includes('inbound whatsapp')
+  );
+
+  if (inboundCallLog) {
+    const raw = inboundCallLog.full_notes || inboundCallLog.summary || '';
+    const match = raw.match(/\[Inbound WhatsApp\]:\s*"?([^"\n\r]+)/i) || raw.match(/"([^"]+)"/);
+    const text = match ? match[1].trim() : raw.replace(/\[Inbound WhatsApp\]:?\s*/i, '').trim();
+    return {
+      isWhatsApp: true,
+      text,
+      time: inboundCallLog.timestamp,
+      label: lead.business_info || 'Inbound Message',
+    };
+  }
+
+  // 2. Check if lead itself came from WhatsApp Inbound
+  const isWhatsAppSource =
+    lead.source === 'WhatsApp Inbound' ||
+    lead.business_notes?.includes('[Initial Inbound WhatsApp Message]');
+
+  if (isWhatsAppSource && lead.business_notes) {
+    const match =
+      lead.business_notes.match(/\[Initial Inbound WhatsApp Message\]:\s*"?([\s\S]*?)(?:"|$)/i) ||
+      lead.business_notes.match(/Inbound WhatsApp Inquiry:\s*"?([\s\S]*?)(?:"|$)/i) ||
+      lead.business_notes.match(/"([^"]{3,200})"/);
+
+    let text = match ? match[1].trim() : '';
+    if (!text) {
+      text = lead.business_notes
+        .split('\n')[0]
+        .replace(/^(Thought-out detailed inquiry received|Inbound business inquiry detected|Inquiry received):\s*"?/i, '')
+        .replace(/"$/, '')
+        .trim();
+    }
+
+    return {
+      isWhatsApp: true,
+      text,
+      time: lead.created_at,
+      label: lead.business_info || 'Inbound Inquiry',
+    };
+  }
+
+  // 3. Regular business notes
+  return {
+    isWhatsApp: false,
+    text: lead.business_notes || '',
+    time: null,
+    label: null,
+  };
+}
 
 interface LeadCardProps {
   lead: Lead;
@@ -60,6 +124,21 @@ export const LeadCard: React.FC<LeadCardProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isFollowUpOpen, setIsFollowUpOpen] = useState(false);
   const [isPostponeModalOpen, setIsPostponeModalOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [copiedPhone, setCopiedPhone] = useState(false);
+  const [savedContact, setSavedContact] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [mobileMenuOpen]);
 
   // Swipe gesture state
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -288,8 +367,8 @@ export const LeadCard: React.FC<LeadCardProps> = ({
             )}
           </div>
 
-          {/* Quick Call & Contact Actions */}
-          <div className="flex items-center gap-2">
+          {/* Desktop Quick Call & Contact Actions */}
+          <div className="hidden sm:flex items-center gap-2">
             <ContactActionMenu
               contact={{
                 name: lead.name,
@@ -361,13 +440,182 @@ export const LeadCard: React.FC<LeadCardProps> = ({
           </div>
         </div>
 
-        {/* Business notes snippet */}
-        {lead.business_notes && (
-          <div className="text-xs text-stone-600 mb-3 line-clamp-2 bg-[#FBF9F5] p-2 rounded-lg border border-stone-200/60">
-            <span className="font-semibold text-stone-700 mr-1">Business:</span>
-            {lead.business_notes}
+        {/* Business notes or WhatsApp message snippet */}
+        {(() => {
+          const msg = getLeadMessageDisplay(lead);
+          if (!msg.text) return null;
+          return (
+            <div className="text-xs mb-3 bg-[#FBF9F5] p-2.5 rounded-lg border border-stone-200/60">
+              {msg.isWhatsApp ? (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-semibold">
+                      <MessageCircle className="w-2.5 h-2.5 fill-emerald-600/30" />
+                      <span>{msg.label || 'WhatsApp Inbound'}</span>
+                    </span>
+                    {msg.time && (
+                      <span className="text-[10px] text-stone-400 font-mono">
+                        {formatFriendlyTime(msg.time)}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-stone-800 line-clamp-2 italic font-sans">
+                    "{msg.text}"
+                  </p>
+                </div>
+              ) : (
+                <div className="line-clamp-2 text-stone-600">
+                  <span className="font-semibold text-stone-700 mr-1">Business:</span>
+                  {msg.text}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Mobile Consolidated Action Toolbar */}
+        <div className="flex sm:hidden items-center justify-between gap-1.5 pb-2.5 mb-2.5 border-b border-stone-100">
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            {/* Tap to Call */}
+            <a
+              href={`tel:${formatPhoneForDialer(lead.phone)}`}
+              className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold border border-stone-200 transition-colors shrink-0"
+              title="Tap to call"
+            >
+              <Phone className="w-3.5 h-3.5 text-amber-700" />
+              <span className="font-mono text-[11px] truncate max-w-[100px]">{formatPhoneDisplay(lead.phone)}</span>
+            </a>
+
+            {/* WhatsApp */}
+            <a
+              href={getWhatsAppUrl(lead.phone)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-1 py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-2xs transition-colors shrink-0 cursor-pointer"
+              title="Chat on WhatsApp"
+            >
+              <MessageCircle className="w-3.5 h-3.5 fill-white/20" />
+              <span>WhatsApp</span>
+            </a>
           </div>
-        )}
+
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Log Call */}
+            <button
+              onClick={() => onLogCall(lead)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+              title="Log call outcome"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Log Call</span>
+            </button>
+
+            {/* More actions menu button */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="p-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 border border-stone-200 transition-colors cursor-pointer"
+                title="More actions"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+
+              {mobileMenuOpen && (
+                <div
+                  ref={menuRef}
+                  className="absolute right-0 bottom-full mb-1.5 w-48 bg-white border border-stone-200 rounded-xl shadow-xl z-30 py-1 text-xs animate-in fade-in slide-in-from-bottom-2 duration-150"
+                >
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(lead.phone);
+                      setCopiedPhone(true);
+                      setTimeout(() => {
+                        setCopiedPhone(false);
+                        setMobileMenuOpen(false);
+                      }, 1500);
+                    }}
+                    className="w-full text-left px-3 py-2 text-stone-700 hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    {copiedPhone ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-stone-400" />}
+                    <span>{copiedPhone ? 'Phone Copied!' : 'Copy Phone'}</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      await saveLeadToContacts({
+                        name: lead.name,
+                        phone: lead.phone,
+                        business_notes: lead.business_notes,
+                        business_info: lead.business_info,
+                        source: lead.source,
+                      });
+                      setSavedContact(true);
+                      setTimeout(() => {
+                        setSavedContact(false);
+                        setMobileMenuOpen(false);
+                      }, 1500);
+                    }}
+                    className="w-full text-left px-3 py-2 text-stone-700 hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    {savedContact ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <UserPlus className="w-3.5 h-3.5 text-stone-400" />}
+                    <span>{savedContact ? 'Saved to Contacts!' : 'Add to Contacts'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setIsFollowUpOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-stone-700 hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Smart Follow-Up (AI)</span>
+                  </button>
+
+                  {onRequestAssistance && (
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        onRequestAssistance(lead);
+                      }}
+                      className="w-full text-left px-3 py-2 text-stone-700 hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Handshake className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Ask Colleague Takeover</span>
+                    </button>
+                  )}
+
+                  {onReassign && (
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        onReassign(lead);
+                      }}
+                      className="w-full text-left px-3 py-2 text-stone-700 hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Reassign Lead</span>
+                    </button>
+                  )}
+
+                  {onPinDirective && (
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        onPinDirective(lead);
+                      }}
+                      className="w-full text-left px-3 py-2 text-stone-700 hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Pin className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Pin Directive</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Next action scheduled & Snippet of last call */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-100 text-xs text-stone-500">

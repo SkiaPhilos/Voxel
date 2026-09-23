@@ -15,6 +15,7 @@ import {
   Menu,
   Users,
   FileSpreadsheet,
+  MessageCircle,
 } from 'lucide-react';
 import type { Lead, User, OutcomeTag, Priority, PinnedComment } from './types';
 import { api, setStoredToken } from './lib/api';
@@ -79,6 +80,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<string>('all');
   const [priorityOnly, setPriorityOnly] = useState(false);
+  const [whatsappOnly, setWhatsappOnly] = useState(false);
 
   // Modals & Panels
   const [activeCallModalLead, setActiveCallModalLead] = useState<Lead | null>(null);
@@ -626,6 +628,19 @@ export default function App() {
   const filteredActiveLeads = useMemo(() => {
     return activeLeads.filter((lead) => {
       if (priorityOnly && lead.priority !== 'High') return false;
+      if (whatsappOnly) {
+        const isWhatsApp =
+          lead.source === 'WhatsApp Inbound' ||
+          lead.business_notes?.toLowerCase().includes('whatsapp') ||
+          (lead.business_info && lead.business_info.toLowerCase().includes('whatsapp')) ||
+          (lead.business_info && lead.business_info.toLowerCase().includes('screenshot')) ||
+          lead.call_logs?.some(
+            (l) =>
+              l.summary?.toLowerCase().includes('whatsapp') ||
+              l.full_notes?.toLowerCase().includes('whatsapp')
+          );
+        if (!isWhatsApp) return false;
+      }
       if (outcomeFilter !== 'all') {
         const lastOutcome = lead.call_logs?.[0]?.outcome_tag;
         if (lastOutcome !== outcomeFilter) return false;
@@ -639,7 +654,7 @@ export default function App() {
         (lead.business_info && lead.business_info.toLowerCase().includes(q))
       );
     });
-  }, [activeLeads, searchQuery, outcomeFilter, priorityOnly]);
+  }, [activeLeads, searchQuery, outcomeFilter, priorityOnly, whatsappOnly]);
 
   const existingPhoneNumbers = useMemo(() => leads.map((l) => l.phone), [leads]);
 
@@ -710,19 +725,19 @@ export default function App() {
             `}
           >
             {/* Top Content Bar: Mobile Hamburger, View Heading, Alerts Toggle & Prominent + New Lead Button */}
-            <header className="sticky top-0 z-30 bg-[#FDFBF7]/95 backdrop-blur-sm border-b border-stone-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 min-w-0">
+            <header className="sticky top-0 z-30 bg-[#FDFBF7]/95 backdrop-blur-sm border-b border-stone-200/80 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-4">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                 {/* Mobile Hamburger Trigger */}
                 <button
                   id="mobile-sidebar-toggle-btn"
                   onClick={() => setIsMobileSidebarOpen(true)}
-                  className="lg:hidden p-2 rounded-xl text-stone-700 hover:bg-stone-200/60 transition-colors cursor-pointer"
+                  className="lg:hidden p-2 rounded-xl text-stone-700 hover:bg-stone-200/60 transition-colors cursor-pointer shrink-0"
                   title="Open navigation menu"
                 >
                   <Menu className="w-5 h-5" />
                 </button>
 
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h1 className="text-base sm:text-lg font-bold text-stone-900 truncate">
                       {currentView === 'active' && 'Active Call Pipeline'}
@@ -736,7 +751,7 @@ export default function App() {
                       {currentView === 'newsletter' && 'Newsletter & Email Dispatch'}
                     </h1>
                     {currentView === 'active' && dueNowLeads.length > 0 && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse shrink-0">
                         <Clock className="w-3 h-3" />
                         <span>{dueNowLeads.length} Due</span>
                       </span>
@@ -757,37 +772,36 @@ export default function App() {
               </div>
 
               {/* Right actions: Alerts Toggle & Prominent + New Lead Button */}
-              <div className="flex items-center gap-2.5 shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
                 {/* Browser & Push Notification Status / Modal Trigger */}
                 {alertFeedbackMsg ? (
-                  <span className="text-[11px] font-medium text-amber-900 bg-amber-100/90 border border-amber-300/80 px-2.5 py-1 rounded-lg animate-in fade-in duration-150">
+                  <span className="text-[11px] font-medium text-amber-900 bg-amber-100/90 border border-amber-300/80 px-2 py-1 rounded-lg animate-in fade-in duration-150 truncate max-w-[120px] sm:max-w-none">
                     {alertFeedbackMsg}
                   </span>
                 ) : isPushActive || notificationPermission === 'granted' ? (
                   <button
                     id="push-alerts-active-btn"
                     onClick={() => setIsPushModalOpen(true)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 text-emerald-800 text-[11px] font-semibold transition-colors cursor-pointer"
+                    className="flex items-center justify-center p-2 sm:px-2.5 sm:py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 text-emerald-800 text-[11px] font-semibold transition-colors cursor-pointer"
                     title="Lock-screen push alerts are active on this device. Tap to test or manage."
                   >
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="hidden sm:inline">Push Alerts Active</span>
-                    <span className="sm:hidden">Alerts On</span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="hidden md:inline ml-1.5">Push Alerts Active</span>
+                    <span className="hidden sm:inline md:hidden ml-1.5">Alerts On</span>
                   </button>
                 ) : (
                   <button
                     id="enable-browser-alerts-btn"
                     onClick={() => setIsPushModalOpen(true)}
-                    className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                    className="flex items-center justify-center p-2 sm:px-3 sm:py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
                     title="Enable lock-screen mobile & web push alerts"
                   >
                     <Bell className="w-3.5 h-3.5 text-amber-700 animate-bounce" />
-                    <span className="hidden sm:inline">Enable Push Alerts</span>
-                    <span className="sm:hidden">Push Alerts</span>
+                    <span className="hidden sm:inline ml-1.5">Push Alerts</span>
                   </button>
                 )}
 
-                {/* Power Dialer Header Quick Trigger */}
+                {/* Power Dialer Header Quick Trigger (desktop/tablet; on mobile reps have it inside pipeline card) */}
                 <button
                   id="header-power-dialer-btn"
                   onClick={() =>
@@ -798,7 +812,7 @@ export default function App() {
                   }
                   disabled={filteredActiveLeads.length === 0 && dueNowLeads.length === 0}
                   title="Launch rapid continuous calling mode"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs transition-all cursor-pointer disabled:opacity-50"
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs transition-all cursor-pointer disabled:opacity-50"
                 >
                   <PhoneCall className="w-3.5 h-3.5 text-amber-700 animate-pulse" />
                   <span>Power Dialer</span>
@@ -819,10 +833,11 @@ export default function App() {
                 <button
                   id="primary-add-lead-btn"
                   onClick={() => setIsNewLeadModalOpen(true)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 active:bg-amber-900 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 active:bg-amber-900 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  title="Create a new Lead"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>New Lead</span>
+                  <span className="hidden xs:inline">New Lead</span>
                 </button>
               </div>
             </header>
@@ -920,7 +935,22 @@ export default function App() {
                         }`}
                       >
                         <Flame className={`w-3.5 h-3.5 ${priorityOnly ? 'text-amber-600' : 'text-stone-400'}`} />
-                        <span>High Priority Only</span>
+                        <span>High Priority</span>
+                      </button>
+
+                      {/* WhatsApp Inbound filter button */}
+                      <button
+                        id="filter-whatsapp-btn"
+                        onClick={() => setWhatsappOnly(!whatsappOnly)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                          whatsappOnly
+                            ? 'bg-emerald-100 text-emerald-900 border-emerald-400 font-bold shadow-2xs'
+                            : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                        }`}
+                        title="Filter leads originating from WhatsApp Inbound or with inbound messages"
+                      >
+                        <MessageCircle className={`w-3.5 h-3.5 ${whatsappOnly ? 'text-emerald-700 fill-emerald-600/30' : 'text-stone-400'}`} />
+                        <span>WhatsApp</span>
                       </button>
 
                       {/* Refresh button */}
