@@ -938,6 +938,9 @@ export async function getLeads(params?: {
         created_at: row.created_at,
         updated_at: row.updated_at,
         call_logs: logs,
+        qa_data: row.qa_data || undefined,
+        qa_entries: row.qa_entries || undefined,
+        qa_sessions: row.qa_sessions || undefined,
       };
     });
 
@@ -1082,6 +1085,9 @@ export async function getLeadById(id: string): Promise<Lead | null> {
       created_at: data.created_at,
       updated_at: data.updated_at,
       call_logs: logs,
+      qa_data: data.qa_data || undefined,
+      qa_entries: data.qa_entries || undefined,
+      qa_sessions: data.qa_sessions || undefined,
     };
   }
 
@@ -1247,10 +1253,22 @@ export async function updateLead(
     if (updates.original_owner_id !== undefined) payload.original_owner_id = updates.original_owner_id;
     if (updates.reassigned_at !== undefined) payload.reassigned_at = updates.reassigned_at;
     if (updates.reassigned_by !== undefined) payload.reassigned_by = updates.reassigned_by;
+    if (updates.qa_data !== undefined) payload.qa_data = updates.qa_data;
+    if (updates.qa_entries !== undefined) payload.qa_entries = updates.qa_entries;
+    if (updates.qa_sessions !== undefined) payload.qa_sessions = updates.qa_sessions;
 
     try {
       const { error } = await supabaseClient.from('leads').update(payload).eq('id', id);
       if (!error) {
+        const updated = await getLeadById(id);
+        if (updated) return updated;
+      } else {
+        // If error might be due to missing qa_* columns in Supabase, retry without them
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.qa_data;
+        delete fallbackPayload.qa_entries;
+        delete fallbackPayload.qa_sessions;
+        await supabaseClient.from('leads').update(fallbackPayload).eq('id', id);
         const updated = await getLeadById(id);
         if (updated) return updated;
       }
@@ -1278,6 +1296,9 @@ export async function updateLead(
   if (updates.original_owner_id !== undefined) lead.original_owner_id = updates.original_owner_id;
   if (updates.reassigned_at !== undefined) lead.reassigned_at = updates.reassigned_at;
   if (updates.reassigned_by !== undefined) lead.reassigned_by = updates.reassigned_by;
+  if (updates.qa_data !== undefined) lead.qa_data = updates.qa_data;
+  if (updates.qa_entries !== undefined) lead.qa_entries = updates.qa_entries;
+  if (updates.qa_sessions !== undefined) lead.qa_sessions = updates.qa_sessions;
   lead.updated_at = nowIso;
 
   saveLocalStore(localStore);

@@ -45,6 +45,25 @@ export interface CallLog {
   audio_name?: string | null;
 }
 
+export interface LeadQAEntry {
+  id: string;
+  question: string; // e.g. "Location / Address", "Number of Daily Parcels"
+  answer: string;
+  category?: string; // e.g. "Courier Logistics", "COD & Finance", "Enterprise", "Custom"
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface LeadQASession {
+  id: string;
+  timestamp: string; // ISO datetime
+  channel?: 'call' | 'msg' | 'voice' | 'manual';
+  logged_by?: string;
+  logged_by_name?: string;
+  summary?: string;
+  answers: Record<string, string>; // snapshot of answered questions
+}
+
 export interface Lead {
   id: string;
   phone: string; // required, unique
@@ -70,6 +89,9 @@ export interface Lead {
   reassigned_at?: string | null;
   reassigned_by?: string | null;
   ai_health?: LeadHealthAssessment;
+  qa_data?: Record<string, string>; // quick key-value map of all current answers
+  qa_entries?: LeadQAEntry[]; // detailed list of QA questions and answers
+  qa_sessions?: LeadQASession[]; // history of QA updates over multiple logs/msgs/voice chat sessions
 }
 
 export interface PotentialCustomer {

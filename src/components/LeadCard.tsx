@@ -23,6 +23,7 @@ import {
   Check,
   Copy,
   UserPlus,
+  ClipboardList,
 } from 'lucide-react';
 import type { Lead, OutcomeTag, PinnedComment, User } from '../types';
 import { isDueNowOrOverdue, formatFriendlyTime } from '../lib/dateUtils';
@@ -36,6 +37,9 @@ import { formatPhoneForDialer, getWhatsAppUrl, saveLeadToContacts } from '../lib
 import { formatPhoneDisplay } from '../lib/countries';
 
 function getLeadMessageDisplay(lead: Lead) {
+  const isCleanShortLabel = (str?: string | null) =>
+    Boolean(str && str.length <= 30 && !str.includes('\n') && !str.includes(': ?') && !str.includes('Location / Address'));
+
   // 1. Check if there are recent inbound WhatsApp messages in call_logs
   const inboundCallLog = lead.call_logs?.find(
     (l) =>
@@ -51,7 +55,7 @@ function getLeadMessageDisplay(lead: Lead) {
       isWhatsApp: true,
       text,
       time: inboundCallLog.timestamp,
-      label: lead.business_info || 'Inbound Message',
+      label: isCleanShortLabel(lead.business_info) ? lead.business_info : 'Inbound Message',
     };
   }
 
@@ -79,7 +83,7 @@ function getLeadMessageDisplay(lead: Lead) {
       isWhatsApp: true,
       text,
       time: lead.created_at,
-      label: lead.business_info || 'Inbound Inquiry',
+      label: isCleanShortLabel(lead.business_info) ? lead.business_info : 'Inbound Inquiry',
     };
   }
 
@@ -105,6 +109,7 @@ interface LeadCardProps {
   onPinCallLog?: (lead: Lead, callLogId: string, snippet: string) => void;
   currentUser?: User | null;
   onCommentStatusUpdated?: (commentId: string, newStatus: 'acknowledged' | 'done') => void;
+  onOpenQA?: (lead: Lead) => void;
 }
 
 export const LeadCard: React.FC<LeadCardProps> = ({
@@ -120,6 +125,7 @@ export const LeadCard: React.FC<LeadCardProps> = ({
   onPinCallLog,
   currentUser,
   onCommentStatusUpdated,
+  onOpenQA,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isFollowUpOpen, setIsFollowUpOpen] = useState(false);
@@ -611,6 +617,19 @@ export const LeadCard: React.FC<LeadCardProps> = ({
                       <span>Pin Directive</span>
                     </button>
                   )}
+
+                  {onOpenQA && (
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        onOpenQA(lead);
+                      }}
+                      className="w-full text-left px-3 py-2 text-amber-900 bg-amber-50/50 hover:bg-amber-100/60 flex items-center gap-2 cursor-pointer font-medium"
+                    >
+                      <ClipboardList className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Lead Q&amp;A Sets</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -635,10 +654,28 @@ export const LeadCard: React.FC<LeadCardProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-stone-400">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            <span className="text-[11px] text-stone-400 hidden xs:inline">
               {lead.call_logs.length} call{lead.call_logs.length === 1 ? '' : 's'} logged
             </span>
+
+            {/* QA Sets Pop-up Button: Second option next to View History */}
+            {onOpenQA && (
+              <button
+                id={`btn-open-qa-${lead.id}`}
+                type="button"
+                onClick={() => onOpenQA(lead)}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100/80 px-2 py-1 rounded-md border border-amber-200/90 transition-colors cursor-pointer shadow-2xs"
+                title="Open Lead Qualification Q&A Sets Pop-up Window"
+              >
+                <ClipboardList className="w-3.5 h-3.5 text-amber-700" />
+                <span>Lead Q&amp;A</span>
+                {lead.qa_data && Object.keys(lead.qa_data).length > 0 && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-600" title="Has answered QA data"></span>
+                )}
+              </button>
+            )}
+
             <button
               id={`toggle-expand-${lead.id}`}
               onClick={() => setIsExpanded(!isExpanded)}

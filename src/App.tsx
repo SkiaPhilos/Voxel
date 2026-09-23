@@ -16,6 +16,9 @@ import {
   Users,
   FileSpreadsheet,
   MessageCircle,
+  Sparkles,
+  ArrowUpRight,
+  Target,
 } from 'lucide-react';
 import type { Lead, User, OutcomeTag, Priority, PinnedComment } from './types';
 import { api, setStoredToken } from './lib/api';
@@ -44,6 +47,8 @@ import { StickyDirectiveFloatingLayer } from './components/StickyDirectiveIndica
 import { AssignedDirectivesView } from './components/AssignedDirectivesView';
 import { AskAssistanceView } from './components/AskAssistanceView';
 import { AskAssistanceModal } from './components/AskAssistanceModal';
+import { LeadQAModal } from './components/LeadQAModal';
+import { CollectedDataView } from './components/CollectedDataView';
 import { isDueNowOrOverdue, isStaleLead } from './lib/dateUtils';
 import { getExistingSubscription } from './lib/pushManager';
 
@@ -99,6 +104,9 @@ export default function App() {
   const [pendingTicketsCount, setPendingTicketsCount] = useState<number>(0);
   const [isAskAssistanceModalOpen, setIsAskAssistanceModalOpen] = useState(false);
   const [assistanceModalLead, setAssistanceModalLead] = useState<Lead | null>(null);
+
+  // Lead Qualification Q&A Modal state
+  const [qaModalLead, setQaModalLead] = useState<Lead | null>(null);
 
   // Power Dialer state
   const [isPowerDialerOpen, setIsPowerDialerOpen] = useState(false);
@@ -572,6 +580,20 @@ export default function App() {
     }
   };
 
+  // Open Lead Qualification Q&A Sets modal
+  const handleOpenQA = (lead: Lead) => {
+    setQaModalLead(lead);
+  };
+
+  // Called when LeadQAModal saves updated qualification sets
+  const handleQASaveSuccess = (updatedLead: Lead) => {
+    setLeads((prev) => prev.map((l) => (l.id === updatedLead.id ? updatedLead : l)));
+    if (selectedDetailLead?.id === updatedLead.id) {
+      setSelectedDetailLead(updatedLead);
+    }
+    setQaModalLead(null);
+  };
+
   // Categorize leads for dashboard views
   const {
     activeLeads,
@@ -622,6 +644,10 @@ export default function App() {
       dueNowLeads: dueNow,
       staleLeads: stale,
     };
+  }, [leads]);
+
+  const collectedDataCount = useMemo(() => {
+    return leads.filter((l) => l.qa_data && Object.keys(l.qa_data).length > 0).length;
   }, [leads]);
 
   // Filtered active leads for main list
@@ -701,6 +727,7 @@ export default function App() {
             onSelectView={(v) => setCurrentView(v)}
             activeLeadsCount={activeLeads.length}
             allLeadsCount={leads.length}
+            collectedDataCount={collectedDataCount}
             closedLeadsCount={closedLeads.length}
             archivedLeadsCount={archivedLeads.length}
             potentialCustomersCount={potentialCustomersCount}
@@ -742,6 +769,7 @@ export default function App() {
                     <h1 className="text-base sm:text-lg font-bold text-stone-900 truncate">
                       {currentView === 'active' && 'Active Call Pipeline'}
                       {currentView === 'all-leads' && 'All Leads Directory'}
+                      {currentView === 'collected-data' && 'Collected Data & Lead Q&A'}
                       {currentView === 'closed' && 'Closed Deals & Matured Leads'}
                       {currentView === 'archive' && 'Archived & Denied Leads'}
                       {currentView === 'potential-customers' && 'Potential Customers Directory'}
@@ -999,21 +1027,208 @@ export default function App() {
 
                 {/* 4. ACTIVE LEADS CARDS LIST */}
                 {filteredActiveLeads.length === 0 ? (
-                  <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-stone-200">
-                    <PhoneCall className="w-10 h-10 text-stone-300 mx-auto mb-2" />
-                    <h3 className="text-sm font-bold text-stone-800">No active leads match</h3>
-                    <p className="text-xs text-stone-500 mt-1 max-w-sm mx-auto">
-                      {searchQuery || priorityOnly || outcomeFilter !== 'all'
-                        ? 'Try clearing your search query or filters.'
-                        : 'Your active dial list is empty. Click "New Lead" to add ~10 daily targets.'}
-                    </p>
-                    <button
-                      onClick={() => setIsNewLeadModalOpen(true)}
-                      className="mt-4 px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
-                    >
-                      + Add New Cold Lead
-                    </button>
-                  </div>
+                  searchQuery || priorityOnly || whatsappOnly || outcomeFilter !== 'all' ? (
+                    /* Filtered out empty state */
+                    <div className="p-10 text-center bg-white rounded-2xl border border-stone-200 shadow-2xs">
+                      <div className="w-12 h-12 rounded-2xl bg-stone-100 flex items-center justify-center text-stone-400 mx-auto mb-3">
+                        <Search className="w-6 h-6" />
+                      </div>
+                      <h3 className="text-sm font-bold text-stone-800">No leads match your active filters</h3>
+                      <p className="text-xs text-stone-500 mt-1 max-w-sm mx-auto">
+                        Try adjusting your search keywords, priority toggle, or outcome filters to see other prospects.
+                      </p>
+                      <button
+                        onClick={() => {
+                          setSearchQuery('');
+                          setPriorityOnly(false);
+                          setWhatsappOnly(false);
+                          setOutcomeFilter('all');
+                        }}
+                        className="mt-4 px-3.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                      >
+                        Reset All Filters
+                      </button>
+                    </div>
+                  ) : (
+                    /* Engaging 'Get Started' Hero Graphic & Prompt */
+                    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-50/70 via-white to-stone-50 border border-amber-200/80 p-6 sm:p-10 text-center shadow-xs">
+                      {/* Decorative ambient elements */}
+                      <div className="absolute top-0 right-0 -mt-8 -mr-8 w-48 h-48 rounded-full bg-amber-400/10 blur-2xl pointer-events-none" />
+                      <div className="absolute bottom-0 left-0 -mb-8 -ml-8 w-48 h-48 rounded-full bg-orange-400/10 blur-2xl pointer-events-none" />
+
+                      <div className="relative z-10 max-w-xl mx-auto flex flex-col items-center">
+                        {/* High-Fidelity Custom Illustrative SVG Graphic */}
+                        <div className="relative mb-6">
+                          <svg
+                            className="w-48 sm:w-56 h-auto drop-shadow-sm select-none"
+                            viewBox="0 0 320 220"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                          >
+                            <defs>
+                              <linearGradient id="warmBaseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="#FEF3C7" />
+                                <stop offset="100%" stopColor="#FDE68A" />
+                              </linearGradient>
+                              <linearGradient id="screenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="#FFFFFF" />
+                                <stop offset="100%" stopColor="#F9FAFB" />
+                              </linearGradient>
+                              <linearGradient id="radarWave" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="#B45309" stopOpacity="0.25" />
+                                <stop offset="100%" stopColor="#D97706" stopOpacity="0.02" />
+                              </linearGradient>
+                              <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%" filterUnits="userSpaceOnUse">
+                                <feDropShadow dx="0" dy="6" stdDeviation="8" floodColor="#78350F" floodOpacity="0.08" />
+                              </filter>
+                            </defs>
+
+                            {/* Outer radar / outreach ripples */}
+                            <circle cx="160" cy="110" r="95" stroke="#FDE68A" strokeWidth="1.5" strokeDasharray="6 6" opacity="0.7" />
+                            <circle cx="160" cy="110" r="75" fill="url(#radarWave)" />
+                            <circle cx="160" cy="110" r="70" stroke="#FBBF24" strokeWidth="1.5" opacity="0.6" />
+
+                            {/* Floating mini target badge on top right */}
+                            <g transform="translate(230, 30)">
+                              <rect width="64" height="28" rx="14" fill="#FFFFFF" stroke="#E5E7EB" strokeWidth="1" filter="url(#cardShadow)" />
+                              <circle cx="15" cy="14" r="5" fill="#10B981" />
+                              <rect x="26" y="10" width="26" height="4" rx="2" fill="#9CA3AF" />
+                              <rect x="26" y="16" width="16" height="3" rx="1.5" fill="#D1D5DB" />
+                            </g>
+
+                            {/* Floating WhatsApp / Inbound inquiry notification card on left */}
+                            <g transform="translate(24, 52)">
+                              <rect width="76" height="36" rx="10" fill="#FFFFFF" stroke="#BBF7D0" strokeWidth="1" filter="url(#cardShadow)" />
+                              <circle cx="18" cy="18" r="8" fill="#10B981" />
+                              {/* WhatsApp phone/chat mark */}
+                              <path d="M15 16.5C15 18 16.5 19.5 18 19.5C19 19.5 20.5 18.5 20.5 17.5" stroke="#FFFFFF" strokeWidth="1.2" strokeLinecap="round" />
+                              <rect x="32" y="12" width="34" height="4" rx="2" fill="#374151" />
+                              <rect x="32" y="19" width="24" height="3" rx="1.5" fill="#9CA3AF" />
+                            </g>
+
+                            {/* Central Dialing Console / Phone Tablet Base */}
+                            <g filter="url(#cardShadow)">
+                              <rect x="100" y="32" width="120" height="154" rx="20" fill="#1F2937" />
+                              <rect x="105" y="37" width="110" height="144" rx="16" fill="url(#screenGrad)" />
+                            </g>
+
+                            {/* Speaker slit & camera */}
+                            <rect x="145" y="44" width="30" height="3" rx="1.5" fill="#D1D5DB" />
+                            <circle cx="182" cy="45.5" r="1.5" fill="#9CA3AF" />
+
+                            {/* Screen Card: Pipeline Target */}
+                            <g transform="translate(116, 58)">
+                              <rect width="88" height="54" rx="8" fill="#FEF3C7" stroke="#FDE68A" strokeWidth="1" />
+                              <circle cx="20" cy="20" r="10" fill="#B45309" />
+                              {/* Head silhouette */}
+                              <circle cx="20" cy="17" r="4" fill="#FFFFFF" />
+                              <path d="M14 26C14 23 17 22 20 22C23 22 26 23 26 26" fill="#FFFFFF" />
+                              <rect x="36" y="14" width="40" height="4" rx="2" fill="#92400E" />
+                              <rect x="36" y="21" width="28" height="3" rx="1.5" fill="#D97706" />
+
+                              {/* Progress bar */}
+                              <rect x="12" y="38" width="64" height="4" rx="2" fill="#FDE68A" />
+                              <rect x="12" y="38" width="40" height="4" rx="2" fill="#B45309" />
+                            </g>
+
+                            {/* Big Glowing Primary Dial CTA on screen */}
+                            <g transform="translate(132, 126)">
+                              <circle cx="28" cy="28" r="24" fill="#B45309" />
+                              <circle cx="28" cy="28" r="28" stroke="#B45309" strokeWidth="2" strokeDasharray="4 4" opacity="0.4" />
+                              {/* Phone receiver icon */}
+                              <path
+                                d="M23.5 21C23 21 21.5 21.8 21.5 23C21.5 24.5 23 27 25 29C27 31 29.5 32.5 31 32.5C32.2 32.5 33 31 33 30.5L30.8 28.3C30.4 27.9 29.7 28 29.3 28.4L28.6 29.1C28.2 28.9 26.5 27.5 26 26.8L26.7 26.1C27.1 25.7 27.2 25 26.8 24.6L24.6 22.4C24.3 22.1 23.9 21.9 23.5 21Z"
+                                fill="#FFFFFF"
+                              />
+                            </g>
+
+                            {/* Decorative spark stars */}
+                            <path d="M80 30L82 35L87 37L82 39L80 44L78 39L73 37L78 35L80 30Z" fill="#F59E0B" />
+                            <path d="M246 160L247.5 164L251.5 165.5L247.5 167L246 171L244.5 167L240.5 165.5L244.5 164L246 160Z" fill="#F59E0B" />
+                          </svg>
+
+                          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-white border border-amber-300 shadow-xs flex items-center gap-1.5 text-[11px] font-bold text-amber-900 whitespace-nowrap">
+                            <Sparkles className="w-3.5 h-3.5 text-amber-600 fill-amber-500/20" />
+                            <span>Pipeline Ready for Calls</span>
+                          </div>
+                        </div>
+
+                        {/* Heading & Subtitle */}
+                        <h3 className="text-lg sm:text-xl font-extrabold text-stone-900 tracking-tight">
+                          Your Active Dial Queue is Clear
+                        </h3>
+                        <p className="text-xs sm:text-sm text-stone-600 mt-2 max-w-md leading-relaxed">
+                          Fuel your cold call cadence. Add high-intent targets individually, or import a fresh batch of contacts from a CSV or spreadsheet to start dialing immediately.
+                        </p>
+
+                        {/* Action Buttons */}
+                        <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3 mt-6 w-full">
+                          <button
+                            id="empty-state-new-lead-btn"
+                            onClick={() => setIsNewLeadModalOpen(true)}
+                            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 active:bg-amber-900 text-white text-xs font-bold shadow-xs transition-all cursor-pointer transform hover:-translate-y-0.5"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Add First Cold Lead</span>
+                          </button>
+
+                          <button
+                            id="empty-state-import-csv-btn"
+                            onClick={() => setIsCsvImportModalOpen(true)}
+                            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-stone-50 active:bg-stone-100 text-stone-800 border border-stone-300 text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                          >
+                            <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                            <span>Import CSV Contacts</span>
+                          </button>
+
+                          {potentialCustomersCount > 0 && (
+                            <button
+                              id="empty-state-inbound-btn"
+                              onClick={() => setCurrentView('potential-customers')}
+                              className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold transition-all cursor-pointer"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-700 fill-emerald-600/30" />
+                              <span>View {potentialCustomersCount} Inbound Inquiries</span>
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Quick Tips */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-8 w-full text-left pt-6 border-t border-amber-200/60">
+                          <div className="p-3 bg-white/70 backdrop-blur-xs rounded-xl border border-stone-200/60">
+                            <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px] mb-0.5">
+                              <Target className="w-3.5 h-3.5 text-amber-600" />
+                              <span>1. Daily Targets</span>
+                            </div>
+                            <p className="text-[11px] text-stone-500">
+                              Aim for ~10 to 15 fresh outreach dials per day to keep momentum high.
+                            </p>
+                          </div>
+
+                          <div className="p-3 bg-white/70 backdrop-blur-xs rounded-xl border border-stone-200/60">
+                            <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px] mb-0.5">
+                              <PhoneCall className="w-3.5 h-3.5 text-amber-600" />
+                              <span>2. Power Dialer</span>
+                            </div>
+                            <p className="text-[11px] text-stone-500">
+                              Launch rapid back-to-back dialing with in-app objection rebuttals and quick timers.
+                            </p>
+                          </div>
+
+                          <div className="p-3 bg-white/70 backdrop-blur-xs rounded-xl border border-stone-200/60">
+                            <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px] mb-0.5">
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>3. WhatsApp Follow-Up</span>
+                            </div>
+                            <p className="text-[11px] text-stone-500">
+                              Send instant AI-personalized WhatsApp or SMS notes right after each call.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
                 ) : (
                   <div className="grid grid-cols-1 gap-3.5">
                     {filteredActiveLeads.map((lead) => (
@@ -1030,6 +1245,7 @@ export default function App() {
                           setAssistanceModalLead(l);
                           setIsAskAssistanceModalOpen(true);
                         }}
+                        onOpenQA={handleOpenQA}
                       />
                     ))}
                   </div>
@@ -1059,6 +1275,24 @@ export default function App() {
                   onRequestAssistance={(l) => {
                     setAssistanceModalLead(l);
                     setIsAskAssistanceModalOpen(true);
+                  }}
+                  onOpenQA={handleOpenQA}
+                />
+              )}
+
+              {/* VIEW 2B: COLLECTED DATA & LEAD QUALIFICATION Q&A WORKSPACE */}
+              {currentView === 'collected-data' && (
+                <CollectedDataView
+                  leads={leads}
+                  currentUser={currentUser}
+                  onOpenQA={handleOpenQA}
+                  onOpenDetail={(lead) => setSelectedDetailLead(lead)}
+                  onLogCall={(lead) => setActiveCallModalLead(lead)}
+                  onLeadUpdated={(updatedLead) => {
+                    setLeads((prev) => prev.map((l) => (l.id === updatedLead.id ? updatedLead : l)));
+                    if (selectedDetailLead?.id === updatedLead.id) {
+                      setSelectedDetailLead(updatedLead);
+                    }
                   }}
                 />
               )}
@@ -1286,8 +1520,18 @@ export default function App() {
             setAssistanceModalLead(lead);
             setIsAskAssistanceModalOpen(true);
           }}
+          onOpenQA={handleOpenQA}
         />
       )}
+
+      {/* LEAD QUALIFICATION Q&A MODAL POP-UP */}
+      <LeadQAModal
+        isOpen={Boolean(qaModalLead)}
+        onClose={() => setQaModalLead(null)}
+        lead={qaModalLead}
+        currentUser={currentUser}
+        onSaveSuccess={handleQASaveSuccess}
+      />
 
       {/* ASK ASSISTANCE / REQUEST TAKEOVER MODAL */}
       {currentUser && (

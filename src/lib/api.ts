@@ -252,6 +252,21 @@ export const api = {
     });
   },
 
+  async updateLeadQA(
+    id: string,
+    data: {
+      qa_data?: Record<string, string>;
+      qa_entries?: any[];
+      qa_sessions?: any[];
+      business_info?: string;
+    }
+  ): Promise<{ lead: Lead }> {
+    return request(`/api/leads/${id}/qa`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   async logCall(
     id: string,
     data: {

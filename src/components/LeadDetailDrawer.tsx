@@ -24,6 +24,11 @@ import {
   MessageSquareText,
   Handshake,
   MessageCircle,
+  ClipboardList,
+  Package,
+  HelpCircle,
+  DollarSign,
+  ChevronRight,
 } from 'lucide-react';
 import type { Lead, OutcomeTag, Priority, User as UserType, PinnedComment } from '../types';
 import { formatFriendlyTime } from '../lib/dateUtils';
@@ -52,6 +57,7 @@ interface LeadDetailDrawerProps {
   currentUser?: UserType | null;
   onOpenReassign?: (lead: Lead) => void;
   onRequestAssistance?: (lead: Lead) => void;
+  onOpenQA?: (lead: Lead) => void;
 }
 
 export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
@@ -64,8 +70,10 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   currentUser,
   onOpenReassign,
   onRequestAssistance,
+  onOpenQA,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [activeDrawerTab, setActiveDrawerTab] = useState<'overview' | 'qa' | 'directives'>('overview');
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editNotes, setEditNotes] = useState('');
@@ -75,6 +83,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [savedToContacts, setSavedToContacts] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
+  const [copiedQASummary, setCopiedQASummary] = useState(false);
 
   // Pinned Comments state
   const [pinnedComments, setPinnedComments] = useState<PinnedComment[]>([]);
@@ -295,6 +304,19 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                       <Edit2 className="w-3.5 h-3.5" />
                       <span>Edit</span>
                     </button>
+                    {onOpenQA && (
+                      <button
+                        onClick={() => onOpenQA(lead)}
+                        className="p-2 rounded-lg text-amber-900 bg-amber-50 hover:bg-amber-100 text-xs font-semibold flex items-center gap-1.5 border border-amber-300 transition-colors cursor-pointer shadow-2xs"
+                        title="Open Lead Qualification Q&A Sets Pop-up Window"
+                      >
+                        <ClipboardList className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Q&amp;A Sets</span>
+                        {lead.qa_data && Object.keys(lead.qa_data).length > 0 && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                        )}
+                      </button>
+                    )}
                     <button
                       onClick={() => onLogCall(lead)}
                       className="px-3.5 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -495,257 +517,499 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             </div>
           </div>
 
-          {/* Pinned Directives & Manager Comments */}
-          {pinnedComments.length > 0 || isAddingPin ? (
-            <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-300 shadow-2xs space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Pin className="w-4 h-4 text-amber-700" />
-                  <h3 className="text-xs font-bold text-amber-950 uppercase tracking-wider">
-                    Pinned Manager Directives ({pinnedComments.length})
-                  </h3>
+          {/* Section Tabs */}
+          <div className="flex items-center gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
+            <button
+              type="button"
+              onClick={() => setActiveDrawerTab('overview')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeDrawerTab === 'overview'
+                  ? 'bg-white text-stone-900 shadow-xs'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              <History className="w-3.5 h-3.5 text-amber-700" />
+              <span>Calls ({lead.call_logs.length})</span>
+            </button>
+
+            <button
+              type="button"
+              id="drawer-tab-qa"
+              onClick={() => setActiveDrawerTab('qa')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeDrawerTab === 'qa'
+                  ? 'bg-white text-amber-950 shadow-xs ring-1 ring-amber-300'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              <ClipboardList className="w-3.5 h-3.5 text-amber-700" />
+              <span>Qualification Q&amp;A</span>
+              {Object.keys(lead.qa_data || {}).length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                  {Object.keys(lead.qa_data || {}).length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveDrawerTab('directives')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeDrawerTab === 'directives'
+                  ? 'bg-white text-stone-900 shadow-xs'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              <Pin className="w-3.5 h-3.5 text-amber-700" />
+              <span>Directives ({pinnedComments.length})</span>
+            </button>
+          </div>
+
+          {/* TAB 1: DEDICATED QUALIFICATION Q&A TAB */}
+          {activeDrawerTab === 'qa' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/90 shadow-2xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="w-5 h-5 text-amber-800" />
+                    <div>
+                      <h3 className="text-sm font-bold text-amber-950">
+                        Lead Qualification Q&amp;A Sets
+                      </h3>
+                      <p className="text-[11px] text-amber-800/80">
+                        Operational logistics, parcel volume, courier &amp; business profile
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {Object.keys(lead.qa_data || {}).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const lines = Object.entries(lead.qa_data || {}).map(([k, v]) => `${k.replace(/: \?$/, '')}: ${v}`);
+                          navigator.clipboard.writeText(lines.join('\n'));
+                          setCopiedQASummary(true);
+                          setTimeout(() => setCopiedQASummary(false), 2000);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                        title="Copy structured Q&A summary"
+                      >
+                        {copiedQASummary ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5 text-stone-500" />
+                            <span>Copy Q&amp;A</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    {onOpenQA && (
+                      <button
+                        type="button"
+                        id="drawer-open-qa-modal-btn"
+                        onClick={() => onOpenQA(lead)}
+                        className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{Object.keys(lead.qa_data || {}).length > 0 ? 'Edit / Add Q&A' : 'Open Q&A Pop-up'}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {(currentUser?.role === 'manager' || currentUser?.role === 'admin') && !isAddingPin && (
-                  <button
-                    onClick={() => setIsAddingPin(true)}
-                    className="text-xs font-bold text-amber-800 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Pin Directive</span>
-                  </button>
+
+                {/* Session count and last updated badge */}
+                {(lead.qa_sessions || []).length > 0 && (
+                  <div className="text-[11px] text-amber-900 bg-amber-100/60 px-3 py-1.5 rounded-xl border border-amber-200/60 flex items-center justify-between flex-wrap gap-2">
+                    <span>
+                      Data collected across <strong className="font-bold">{(lead.qa_sessions || []).length} session{(lead.qa_sessions || []).length === 1 ? '' : 's'}</strong> (Call logs, WhatsApp msgs, voice chats)
+                    </span>
+                    <span className="font-mono text-[10px] text-amber-800/70">
+                      Last logged: {new Date(lead.qa_sessions![0].timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
                 )}
               </div>
 
-              {/* Quick Add Form for Manager/Admin */}
-              {isAddingPin && (
-                <form onSubmit={handleAddPin} className="p-3 bg-white rounded-xl border border-stone-200 space-y-2.5">
-                  <textarea
-                    required
-                    rows={2}
-                    value={newPinText}
-                    onChange={(e) => setNewPinText(e.target.value)}
-                    placeholder="Enter manager directive or special instruction for this lead..."
-                    className="w-full p-2 text-xs border border-stone-300 rounded-lg text-stone-900 focus:ring-2 focus:ring-amber-700 focus:outline-hidden"
-                  />
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAddingPin(false);
-                        setNewPinText('');
-                      }}
-                      className="px-2.5 py-1 text-xs text-stone-600 hover:text-stone-900"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSubmittingPin || !newPinText.trim()}
-                      className="px-3 py-1 bg-amber-700 text-white rounded-lg text-xs font-bold hover:bg-amber-800 cursor-pointer disabled:opacity-50"
-                    >
-                      {isSubmittingPin ? 'Pinning...' : 'Post Directive'}
-                    </button>
+              {/* QA Answers Grid */}
+              {Object.keys(lead.qa_data || {}).length > 0 ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {Object.entries(lead.qa_data || {}).map(([question, answer]) => (
+                      <div
+                        key={question}
+                        className="p-3.5 bg-white rounded-xl border border-stone-200 shadow-2xs hover:border-amber-200 transition-all space-y-1"
+                      >
+                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-stone-500 uppercase tracking-wide">
+                          <HelpCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span className="truncate">{question}</span>
+                        </div>
+                        <div className="text-sm font-bold text-stone-900 break-words pl-5">
+                          {answer}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </form>
-              )}
 
-              <div className="space-y-2">
-                {pinnedComments.map((pc) => (
-                  <div
-                    key={pc.id}
-                    className="p-3 rounded-xl bg-white border border-stone-200 shadow-2xs space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <UserAvatar
-                          avatarUrl={pc.author_avatar_url}
-                          name={pc.author_name}
-                          size="xs"
-                        />
-                        <span className="text-xs font-bold text-stone-900">{pc.author_name}</span>
-                        <span className="text-[10px] text-stone-400 font-mono">
-                          {new Date(pc.created_at).toLocaleDateString()}
+                  {/* Multi-session History Timeline */}
+                  {(lead.qa_sessions || []).length > 0 && (
+                    <div className="mt-4 p-4 rounded-2xl bg-white border border-stone-200 shadow-2xs space-y-3">
+                      <div className="flex items-center justify-between border-b border-stone-100 pb-2">
+                        <div className="flex items-center gap-2">
+                          <History className="w-4 h-4 text-amber-700" />
+                          <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                            Q&amp;A Session Logs ({(lead.qa_sessions || []).length})
+                          </h4>
+                        </div>
+                        <span className="text-[11px] text-stone-400">
+                          Multi-session records
                         </span>
                       </div>
 
-                      <span
-                        className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-md ${
-                          pc.status === 'done'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : pc.status === 'acknowledged'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-amber-100 text-amber-900'
-                        }`}
-                      >
-                        {pc.status}
-                      </span>
-                    </div>
+                      <div className="space-y-3">
+                        {(lead.qa_sessions || []).map((session, sIdx) => (
+                          <div
+                            key={session.id || sIdx}
+                            className="p-3 rounded-xl bg-stone-50/70 border border-stone-200/80 space-y-2 text-xs"
+                          >
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                                  {session.channel || 'call'}
+                                </span>
+                                <span className="font-semibold text-stone-800">
+                                  Logged by {session.logged_by_name || session.logged_by || (session as any).agent_name || 'Agent'}
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-mono text-stone-400">
+                                {new Date(session.timestamp).toLocaleString()}
+                              </span>
+                            </div>
 
-                    <p className="text-xs text-stone-700 whitespace-pre-wrap">{pc.content}</p>
+                            {(session.summary || (session as any).notes) && (
+                              <p className="text-stone-600 italic bg-white p-2 rounded-lg border border-stone-100 text-[11px]">
+                                "{session.summary || (session as any).notes}"
+                              </p>
+                            )}
 
-                    <div className="flex items-center justify-between pt-1 border-t border-stone-100 text-[11px]">
-                      <div className="text-stone-400 text-[10px]">
-                        {pc.status === 'acknowledged' && pc.acknowledged_at && (
-                          <span>Ack'd {new Date(pc.acknowledged_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        )}
-                        {pc.status === 'done' && <span>Resolved</span>}
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {session.answers && Object.entries(session.answers).map(([q, ans], eIdx) => (
+                                <span
+                                  key={eIdx}
+                                  className="inline-flex items-center gap-1 text-[11px] bg-white px-2 py-1 rounded-md border border-stone-200 font-mono"
+                                >
+                                  <span className="text-stone-500 font-semibold">{q.replace(/: \?$/, '')}:</span>
+                                  <span className="text-amber-950 font-bold">{ans}</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-
-                      {pc.status !== 'done' && (
-                        <button
-                          type="button"
-                          onClick={() => handleUpdatePinStatus(pc.id, 'done')}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1 ${
-                            currentUser?.role === 'agent'
-                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                              : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200'
-                          }`}
-                        >
-                          <Check className="w-3 h-3" />
-                          <span>{currentUser?.role === 'agent' ? 'Mark Done' : 'Manager Override: Mark Done'}</span>
-                        </button>
-                      )}
                     </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-stone-200 space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto border border-amber-200">
+                    <ClipboardList className="w-6 h-6" />
                   </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="px-4 py-2.5 rounded-xl bg-white border border-stone-200/80 shadow-2xs flex items-center justify-between text-xs text-stone-500">
-              <div className="flex items-center gap-2">
-                <Pin className="w-3.5 h-3.5 text-stone-400" />
-                <span>Pinned Directives (0)</span>
-              </div>
-              {(currentUser?.role === 'manager' || currentUser?.role === 'admin') && (
-                <button
-                  onClick={() => setIsAddingPin(true)}
-                  className="text-xs font-semibold text-amber-800 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Pin Directive</span>
-                </button>
+                  <div>
+                    <h4 className="text-sm font-bold text-stone-900">
+                      No Qualification Q&amp;A Collected Yet
+                    </h4>
+                    <p className="text-xs text-stone-500 max-w-md mx-auto mt-1">
+                      During phone calls or WhatsApp conversations, ask key logistics questions like location, number of daily parcels, business type, and current courier service provider.
+                    </p>
+                  </div>
+
+                  {onOpenQA && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenQA(lead)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Open Q&amp;A Sets Pop-up</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
 
-          {/* Structured Business Info Block */}
-          {lead.business_info ? (
-            <div className="p-4 rounded-2xl bg-white border border-stone-200 shadow-2xs space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Building className="w-4 h-4 text-amber-700" />
-                  <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                    Structured Business &amp; Customer Info
-                  </h3>
-                </div>
-                <button
-                  onClick={startEditing}
-                  className="text-xs text-stone-500 hover:text-stone-800 flex items-center gap-1 cursor-pointer"
+          {/* TAB 2: OVERVIEW & CALL HISTORY */}
+          {activeDrawerTab === 'overview' && (
+            <div className="space-y-4">
+              {/* Quick Q&A Preview Strip */}
+              {Object.keys(lead.qa_data || {}).length > 0 && (
+                <div
+                  onClick={() => setActiveDrawerTab('qa')}
+                  className="p-3 rounded-xl bg-amber-50 hover:bg-amber-100/70 border border-amber-200/90 flex items-center justify-between cursor-pointer transition-colors group"
                 >
-                  <Edit2 className="w-3 h-3" />
-                  <span>Edit</span>
-                </button>
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4 text-amber-700" />
+                    <span className="text-xs text-amber-950 font-medium">
+                      <strong>{Object.keys(lead.qa_data || {}).length} Qualification answers</strong> recorded (Location, Parcels, Courier, etc.)
+                    </span>
+                  </div>
+                  <span className="text-xs font-bold text-amber-800 flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                    <span>View Q&amp;A</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              )}
+
+              {/* Structured Business Info Block */}
+              {lead.business_info ? (
+                <div className="p-4 rounded-2xl bg-white border border-stone-200 shadow-2xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Building className="w-4 h-4 text-amber-700" />
+                      <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                        Structured Business &amp; Customer Info
+                      </h3>
+                    </div>
+                    <button
+                      onClick={startEditing}
+                      className="text-xs text-stone-500 hover:text-stone-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+                  </div>
+                  <div className="p-3 bg-stone-50 border border-stone-200/80 rounded-xl text-xs text-stone-700 whitespace-pre-wrap font-mono">
+                    {lead.business_info}
+                  </div>
+                </div>
+              ) : (
+                <div className="px-4 py-2.5 rounded-xl bg-white border border-stone-200/80 shadow-2xs flex items-center justify-between text-xs text-stone-500">
+                  <div className="flex items-center gap-2">
+                    <Building className="w-3.5 h-3.5 text-stone-400" />
+                    <span>Structured Info: None logged</span>
+                  </div>
+                  <button
+                    onClick={startEditing}
+                    className="text-stone-600 hover:text-amber-800 font-medium text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Add Info</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Call History Timeline */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <History className="w-4 h-4 text-amber-700" />
+                    <span>Full Call History ({lead.call_logs.length})</span>
+                  </h3>
+                  <button
+                    onClick={() => onLogCall(lead)}
+                    className="text-xs font-semibold text-amber-800 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Log New Call</span>
+                  </button>
+                </div>
+
+                {lead.call_logs.length === 0 ? (
+                  <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-stone-200">
+                    <Phone className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                    <p className="text-xs text-stone-500 font-medium">No calls made yet.</p>
+                    <button
+                      onClick={() => onLogCall(lead)}
+                      className="mt-3 px-3 py-1.5 text-xs font-bold bg-amber-700 text-white rounded-lg hover:bg-amber-800 cursor-pointer"
+                    >
+                      Log First Call
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {lead.call_logs.map((log, idx) => (
+                      <div
+                        key={log.id || idx}
+                        className="p-4 rounded-xl bg-white border border-stone-200 shadow-2xs space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-stone-100 text-stone-800 border border-stone-200">
+                            {log.outcome_tag}
+                          </span>
+                          <span className="text-[11px] font-mono text-stone-400">
+                            {new Date(log.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+
+                        <div className="text-xs font-bold text-stone-900">{log.summary}</div>
+
+                        {log.full_notes && (
+                          <p className="text-xs text-stone-600 bg-[#FBF9F5] p-2.5 rounded-lg border border-stone-200/60 whitespace-pre-wrap">
+                            {log.full_notes}
+                          </p>
+                        )}
+
+                        {log.business_info && (
+                          <div className="text-[11px] text-amber-900 bg-amber-50 p-2 rounded border border-amber-200 flex items-start gap-1.5">
+                            <span className="font-bold shrink-0">Captured Info:</span>
+                            <span>{log.business_info}</span>
+                          </div>
+                        )}
+
+                        {log.audio_url && (
+                          <div className="pt-1">
+                            <AudioPlayer
+                              src={log.audio_url}
+                              title={log.audio_name || `${lead.name} Call Recording`}
+                              duration={log.audio_duration}
+                            />
+                          </div>
+                        )}
+
+                        {log.logged_by && (
+                          <div className="flex items-center justify-end gap-1.5 pt-1 text-[10px] text-stone-500">
+                            <span className="text-stone-400">Logged by:</span>
+                            <UserAvatar name={log.logged_by} size="xs" />
+                            <span className="font-semibold text-stone-700">{log.logged_by}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="p-3 bg-stone-50 border border-stone-200/80 rounded-xl text-xs text-stone-700 whitespace-pre-wrap font-mono">
-                {lead.business_info}
-              </div>
-            </div>
-          ) : (
-            <div className="px-4 py-2.5 rounded-xl bg-white border border-stone-200/80 shadow-2xs flex items-center justify-between text-xs text-stone-500">
-              <div className="flex items-center gap-2">
-                <Building className="w-3.5 h-3.5 text-stone-400" />
-                <span>Structured Info: None logged</span>
-              </div>
-              <button
-                onClick={startEditing}
-                className="text-stone-600 hover:text-amber-800 font-medium text-xs flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Add Info</span>
-              </button>
             </div>
           )}
 
-          {/* Call History Timeline */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
-                <History className="w-4 h-4 text-amber-700" />
-                <span>Full Call History ({lead.call_logs.length})</span>
-              </h3>
-              <button
-                onClick={() => onLogCall(lead)}
-                className="text-xs font-semibold text-amber-800 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Log New Call</span>
-              </button>
-            </div>
-
-            {lead.call_logs.length === 0 ? (
-              <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-stone-200">
-                <Phone className="w-8 h-8 text-stone-300 mx-auto mb-2" />
-                <p className="text-xs text-stone-500 font-medium">No calls made yet.</p>
-                <button
-                  onClick={() => onLogCall(lead)}
-                  className="mt-3 px-3 py-1.5 text-xs font-bold bg-amber-700 text-white rounded-lg hover:bg-amber-800 cursor-pointer"
-                >
-                  Log First Call
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {lead.call_logs.map((log, idx) => (
-                  <div
-                    key={log.id || idx}
-                    className="p-4 rounded-xl bg-white border border-stone-200 shadow-2xs space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-stone-100 text-stone-800 border border-stone-200">
-                        {log.outcome_tag}
-                      </span>
-                      <span className="text-[11px] font-mono text-stone-400">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-
-                    <div className="text-xs font-bold text-stone-900">{log.summary}</div>
-
-                    {log.full_notes && (
-                      <p className="text-xs text-stone-600 bg-[#FBF9F5] p-2.5 rounded-lg border border-stone-200/60 whitespace-pre-wrap">
-                        {log.full_notes}
-                      </p>
-                    )}
-
-                    {log.business_info && (
-                      <div className="text-[11px] text-amber-900 bg-amber-50 p-2 rounded border border-amber-200 flex items-start gap-1.5">
-                        <span className="font-bold shrink-0">Captured Info:</span>
-                        <span>{log.business_info}</span>
-                      </div>
-                    )}
-
-                    {log.audio_url && (
-                      <div className="pt-1">
-                        <AudioPlayer
-                          src={log.audio_url}
-                          title={log.audio_name || `${lead.name} Call Recording`}
-                          duration={log.audio_duration}
-                        />
-                      </div>
-                    )}
-
-                    {log.logged_by && (
-                      <div className="flex items-center justify-end gap-1.5 pt-1 text-[10px] text-stone-500">
-                        <span className="text-stone-400">Logged by:</span>
-                        <UserAvatar name={log.logged_by} size="xs" />
-                        <span className="font-semibold text-stone-700">{log.logged_by}</span>
-                      </div>
-                    )}
+          {/* TAB 3: DIRECTIVES & MANAGER COMMENTS */}
+          {activeDrawerTab === 'directives' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-300 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Pin className="w-4 h-4 text-amber-700" />
+                    <h3 className="text-xs font-bold text-amber-950 uppercase tracking-wider">
+                      Pinned Manager Directives ({pinnedComments.length})
+                    </h3>
                   </div>
-                ))}
+                  {(currentUser?.role === 'manager' || currentUser?.role === 'admin') && !isAddingPin && (
+                    <button
+                      onClick={() => setIsAddingPin(true)}
+                      className="text-xs font-bold text-amber-800 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Pin Directive</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick Add Form for Manager/Admin */}
+                {isAddingPin && (
+                  <form onSubmit={handleAddPin} className="p-3 bg-white rounded-xl border border-stone-200 space-y-2.5">
+                    <textarea
+                      required
+                      rows={2}
+                      value={newPinText}
+                      onChange={(e) => setNewPinText(e.target.value)}
+                      placeholder="Enter manager directive or special instruction for this lead..."
+                      className="w-full p-2 text-xs border border-stone-300 rounded-lg text-stone-900 focus:ring-2 focus:ring-amber-700 focus:outline-hidden"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingPin(false);
+                          setNewPinText('');
+                        }}
+                        className="px-2.5 py-1 text-xs text-stone-600 hover:text-stone-900"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingPin || !newPinText.trim()}
+                        className="px-3 py-1 bg-amber-700 text-white rounded-lg text-xs font-bold hover:bg-amber-800 cursor-pointer disabled:opacity-50"
+                      >
+                        {isSubmittingPin ? 'Pinning...' : 'Post Directive'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {pinnedComments.length === 0 && !isAddingPin && (
+                  <div className="p-6 text-center bg-white rounded-xl border border-dashed border-stone-200 text-xs text-stone-500">
+                    No active directives pinned for this lead.
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {pinnedComments.map((pc) => (
+                    <div
+                      key={pc.id}
+                      className="p-3 rounded-xl bg-white border border-stone-200 shadow-2xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <UserAvatar
+                            avatarUrl={pc.author_avatar_url}
+                            name={pc.author_name}
+                            size="xs"
+                          />
+                          <span className="text-xs font-bold text-stone-900">{pc.author_name}</span>
+                          <span className="text-[10px] text-stone-400 font-mono">
+                            {new Date(pc.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+
+                        <span
+                          className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-md ${
+                            pc.status === 'done'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : pc.status === 'acknowledged'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-amber-100 text-amber-900'
+                          }`}
+                        >
+                          {pc.status}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-stone-700 whitespace-pre-wrap">{pc.content}</p>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-stone-100 text-[11px]">
+                        <div className="text-stone-400 text-[10px]">
+                          {pc.status === 'acknowledged' && pc.acknowledged_at && (
+                            <span>Ack'd {new Date(pc.acknowledged_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          )}
+                          {pc.status === 'done' && <span>Resolved</span>}
+                        </div>
+
+                        {pc.status !== 'done' && (
+                          <button
+                            type="button"
+                            onClick={() => handleUpdatePinStatus(pc.id, 'done')}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1 ${
+                              currentUser?.role === 'agent'
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200'
+                            }`}
+                          >
+                            <Check className="w-3 h-3" />
+                            <span>{currentUser?.role === 'agent' ? 'Mark Done' : 'Manager Override: Mark Done'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Footer controls: Archive / Restore */}
           <div className="pt-4 border-t border-stone-200 flex items-center justify-between text-xs">

@@ -20,6 +20,7 @@ See [addendum.md](./addendum.md) for full feature specifications and acceptance 
 | 10 | **Live Leaderboard & Activity Feed** | ⚪ Queued | — | — | Real-time daily team scoreboard and call stream. |
 | 11 | **Call Audio & Voicemail Uploads** | ⚪ Queued | — | — | Audio attachments on call records with embedded player. |
 | 12 | **Mobile Card Swipe Gestures** | ⚪ Queued | — | — | Touch swipe actions for rapid phone handling. |
+| 13 | **Lead Qualification Q&A Sets & Dedicated Tab** | 🟢 Completed | 2026-09-23 | 2026-09-23 | Pop-up modal with 3 presets (Courier Logistics, COD, Enterprise), custom questions, dedicated dossier tab with session timeline, and CSV export integration. |
 
 ---
 

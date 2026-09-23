@@ -20,6 +20,7 @@ import {
   X,
   Handshake,
   Ticket,
+  Database,
 } from 'lucide-react';
 import type { User } from '../types';
 import { UserAvatar } from './UserAvatar';
@@ -27,6 +28,7 @@ import { UserAvatar } from './UserAvatar';
 export type AppView =
   | 'active'
   | 'all-leads'
+  | 'collected-data'
   | 'directives'
   | 'ask-assistance'
   | 'closed'
@@ -40,6 +42,7 @@ interface SidebarProps {
   onSelectView: (view: AppView) => void;
   activeLeadsCount: number;
   allLeadsCount: number;
+  collectedDataCount?: number;
   closedLeadsCount: number;
   archivedLeadsCount: number;
   potentialCustomersCount?: number;
@@ -62,6 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectView,
   activeLeadsCount,
   allLeadsCount,
+  collectedDataCount,
   closedLeadsCount,
   archivedLeadsCount,
   potentialCustomersCount,
@@ -119,6 +123,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       count: allLeadsCount,
       hasPulse: false,
       badgeColor: 'bg-stone-200 text-stone-700',
+    },
+    {
+      id: 'collected-data' as const,
+      label: 'Collected Data',
+      icon: Database,
+      count: collectedDataCount,
+      hasPulse: false,
+      badgeColor: 'bg-amber-100 text-amber-900',
     },
     {
       id: 'directives' as const,

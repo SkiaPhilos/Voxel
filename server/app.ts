@@ -915,7 +915,20 @@ app.patch('/api/leads/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
 
-    const { name, phone, business_notes, source, email, priority, next_action_at, status, business_info } = req.body;
+    const {
+      name,
+      phone,
+      business_notes,
+      source,
+      email,
+      priority,
+      next_action_at,
+      status,
+      business_info,
+      qa_data,
+      qa_entries,
+      qa_sessions,
+    } = req.body;
 
     if (phone && cleanPhone(phone) !== cleanPhone(lead.phone)) {
       const duplicate = await findLeadByPhone(phone);
@@ -934,12 +947,45 @@ app.patch('/api/leads/:id', requireAuth, async (req, res) => {
       next_action_at,
       status,
       business_info,
+      qa_data,
+      qa_entries,
+      qa_sessions,
     });
 
     res.json({ lead: updated });
   } catch (err: any) {
     console.error('updateLead error:', err);
     res.status(500).json({ error: 'Failed to update lead' });
+  }
+});
+
+// Update or link lead qualification Q&A sets
+app.post('/api/leads/:id/qa', requireAuth, async (req, res) => {
+  try {
+    const lead = await getLeadById(req.params.id);
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    const { qa_data, qa_entries, qa_sessions, business_info } = req.body;
+
+    let targetBusinessInfo = business_info !== undefined ? business_info : lead.business_info;
+    // Prevent polluting general business_info with raw dumped QA strings
+    if (typeof targetBusinessInfo === 'string' && targetBusinessInfo.startsWith('Location / Address:')) {
+      targetBusinessInfo = lead.business_info && !lead.business_info.startsWith('Location / Address:') ? lead.business_info : '';
+    }
+
+    const updated = await updateLead(lead.id, {
+      qa_data: qa_data !== undefined ? qa_data : lead.qa_data,
+      qa_entries: qa_entries !== undefined ? qa_entries : lead.qa_entries,
+      qa_sessions: qa_sessions !== undefined ? qa_sessions : lead.qa_sessions,
+      business_info: targetBusinessInfo,
+    });
+
+    res.json({ lead: updated });
+  } catch (err: any) {
+    console.error('updateLeadQA error:', err);
+    res.status(500).json({ error: 'Failed to save lead Q&A data' });
   }
 });
 
@@ -1148,6 +1194,91 @@ function formatIsoTimestamp(val: string | number | Date | undefined | null): str
   }
 }
 
+const PRESET_QA_QUESTIONS = [
+  'Location / Address: ?',
+  'Number of Daily Parcels: ?',
+  'Current Courier Service Provider: ?',
+  'Primary Business / Industry: ?',
+  'Average Parcel Weight / Size: ?',
+  'Current Pain Point / Delivery Issues: ?',
+  'Preferred Delivery Speed / SLA: ?',
+  'COD Remittance Frequency: ?',
+  'Cash Flow / Daily COD Value: ?',
+  'Return / RTO (Return to Origin) %: ?',
+  'Preferred Bank for COD Transfer: ?',
+  'Number of Warehouses / Dispatch Centers: ?',
+  'Daily Pickup Timing & Frequency: ?',
+  'Flyers & Packaging Material Needed: ?',
+  'Key Decision Maker & Direct Phone: ?',
+  'Expected Onboarding / Trial Date: ?',
+];
+
+function getLeadAnswerForQuestion(lead: any, question: string): string {
+  if (!lead) return '';
+  const qaData = lead.qa_data || {};
+  // 1. Exact key match
+  if (qaData[question] !== undefined && qaData[question] !== null && String(qaData[question]).trim()) {
+    return String(qaData[question]).trim();
+  }
+  // 2. Normalized key match (stripping trailing : ? or whitespace or casing)
+  const normTarget = question.replace(/: \?$/, '').replace(/\?$/, '').trim().toLowerCase();
+  for (const [key, val] of Object.entries(qaData)) {
+    const normKey = key.replace(/: \?$/, '').replace(/\?$/, '').trim().toLowerCase();
+    if (normKey === normTarget && val !== undefined && val !== null && String(val).trim()) {
+      return String(val).trim();
+    }
+  }
+  // 3. Search qa_entries
+  if (Array.isArray(lead.qa_entries)) {
+    const entry = lead.qa_entries.find((e: any) => {
+      if (!e || !e.question) return false;
+      const normE = e.question.replace(/: \?$/, '').replace(/\?$/, '').trim().toLowerCase();
+      return normE === normTarget;
+    });
+    if (entry && entry.answer && String(entry.answer).trim()) {
+      return String(entry.answer).trim();
+    }
+  }
+  return '';
+}
+
+function collectAllDynamicQAQuestions(leads: any[]): { presetQuestions: string[]; customQuestions: string[]; allQuestions: string[] } {
+  const customQuestionsSet = new Set<string>();
+  const normalizedPresets = new Set(
+    PRESET_QA_QUESTIONS.map((q) => q.replace(/: \?$/, '').replace(/\?$/, '').trim().toLowerCase())
+  );
+
+  leads.forEach((lead) => {
+    // Collect from qa_data keys
+    if (lead.qa_data && typeof lead.qa_data === 'object') {
+      Object.keys(lead.qa_data).forEach((rawQ) => {
+        const norm = rawQ.replace(/: \?$/, '').replace(/\?$/, '').trim().toLowerCase();
+        if (norm && !normalizedPresets.has(norm)) {
+          customQuestionsSet.add(rawQ.trim());
+        }
+      });
+    }
+    // Collect from qa_entries
+    if (Array.isArray(lead.qa_entries)) {
+      lead.qa_entries.forEach((e: any) => {
+        if (e && e.question) {
+          const norm = e.question.replace(/: \?$/, '').replace(/\?$/, '').trim().toLowerCase();
+          if (norm && !normalizedPresets.has(norm)) {
+            customQuestionsSet.add(e.question.trim());
+          }
+        }
+      });
+    }
+  });
+
+  const customQuestions = Array.from(customQuestionsSet);
+  return {
+    presetQuestions: PRESET_QA_QUESTIONS,
+    customQuestions,
+    allQuestions: [...PRESET_QA_QUESTIONS, ...customQuestions],
+  };
+}
+
 // Professional Leads CSV Export
 app.get('/api/leads/export/csv', requireAuth, async (req, res) => {
   const { type } = req.query; // 'closed', 'archived', or 'all'
@@ -1171,7 +1302,10 @@ app.get('/api/leads/export/csv', requireAuth, async (req, res) => {
       );
     }
 
-    const headers = [
+    // Dynamic Q&A question columns: presets first, then any custom questions detected across leads
+    const { allQuestions } = collectAllDynamicQAQuestions(targetLeads);
+
+    const baseHeaders = [
       'Lead ID',
       'Name',
       'Phone Number',
@@ -1185,9 +1319,12 @@ app.get('/api/leads/export/csv', requireAuth, async (req, res) => {
       'Last Updated (ISO)',
       'Reassigned At (ISO)',
       'Total Calls Logged',
-      'Business Info',
+      'Base Business Notes',
       'All Notes & Full Call Logs',
     ];
+
+    // All QA questions are placed at the end as dedicated columns with question as column heading
+    const headers = [...baseHeaders, ...allQuestions];
 
     const rows = targetLeads.map((lead) => {
       const concatenatedNotes = [
@@ -1202,7 +1339,7 @@ app.get('/api/leads/export/csv', requireAuth, async (req, res) => {
         .filter(Boolean)
         .join('\n---\n');
 
-      return [
+      const baseValues = [
         sanitizeAndEscapeCsv(lead.id),
         sanitizeAndEscapeCsv(lead.name),
         sanitizeAndEscapeCsv(lead.phone),
@@ -1216,9 +1353,17 @@ app.get('/api/leads/export/csv', requireAuth, async (req, res) => {
         sanitizeAndEscapeCsv(formatIsoTimestamp(lead.updated_at)),
         sanitizeAndEscapeCsv(formatIsoTimestamp(lead.reassigned_at)),
         sanitizeAndEscapeCsv((lead.call_logs || []).length),
-        sanitizeAndEscapeCsv(lead.business_info || ''),
+        sanitizeAndEscapeCsv(lead.business_notes || ''),
         sanitizeAndEscapeCsv(concatenatedNotes),
-      ].join(',');
+      ];
+
+      // For every question column (presets + custom at end), extract this lead's answer
+      const qaValues = allQuestions.map((question) => {
+        const answer = getLeadAnswerForQuestion(lead, question);
+        return sanitizeAndEscapeCsv(answer);
+      });
+
+      return [...baseValues, ...qaValues].join(',');
     });
 
     const csvContent = [headers.map(sanitizeAndEscapeCsv).join(','), ...rows].join('\n');
@@ -1277,7 +1422,9 @@ app.get('/api/admin/export/all-data/csv', requireAuth, requireAdmin, async (req,
     const allUsers = await listUsers();
     const userMap = new Map(allUsers.map((u) => [u.id, u]));
 
-    const headers = [
+    const { allQuestions } = collectAllDynamicQAQuestions(allLeads);
+
+    const baseHeaders = [
       'Lead ID',
       'Name',
       'Phone Number',
@@ -1294,9 +1441,11 @@ app.get('/api/admin/export/all-data/csv', requireAuth, requireAdmin, async (req,
       'Last Updated (ISO)',
       'Next Follow-up Due (ISO)',
       'Total Calls Logged',
-      'Business Info',
+      'Base Business Notes',
       'All Notes & Full Call Logs',
     ];
+
+    const headers = [...baseHeaders, ...allQuestions];
 
     const rows = allLeads.map((lead) => {
       const assignedUser = lead.assigned_to ? userMap.get(lead.assigned_to) : null;
@@ -1314,7 +1463,7 @@ app.get('/api/admin/export/all-data/csv', requireAuth, requireAdmin, async (req,
         .filter(Boolean)
         .join('\n---\n');
 
-      return [
+      const baseValues = [
         sanitizeAndEscapeCsv(lead.id),
         sanitizeAndEscapeCsv(lead.name),
         sanitizeAndEscapeCsv(lead.phone),
@@ -1331,9 +1480,16 @@ app.get('/api/admin/export/all-data/csv', requireAuth, requireAdmin, async (req,
         sanitizeAndEscapeCsv(formatIsoTimestamp(lead.updated_at)),
         sanitizeAndEscapeCsv(formatIsoTimestamp(lead.next_action_at)),
         sanitizeAndEscapeCsv((lead.call_logs || []).length),
-        sanitizeAndEscapeCsv(lead.business_info || ''),
+        sanitizeAndEscapeCsv(lead.business_notes || ''),
         sanitizeAndEscapeCsv(concatenatedNotes),
-      ].join(',');
+      ];
+
+      const qaValues = allQuestions.map((q) => {
+        const answer = getLeadAnswerForQuestion(lead, q);
+        return sanitizeAndEscapeCsv(answer);
+      });
+
+      return [...baseValues, ...qaValues].join(',');
     });
 
     const csvContent = [headers.map(sanitizeAndEscapeCsv).join(','), ...rows].join('\n');

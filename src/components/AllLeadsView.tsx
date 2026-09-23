@@ -15,6 +15,7 @@ import {
 import type { Lead, Priority, PinnedComment, User } from '../types';
 import { LeadCard } from './LeadCard';
 import { StickyDirectiveFloatingLayer } from './StickyDirectiveIndicator';
+import { generateLeadsCsv } from '../lib/csvExportUtils';
 
 interface AllLeadsViewProps {
   leads: Lead[];
@@ -27,6 +28,7 @@ interface AllLeadsViewProps {
   pinnedComments?: PinnedComment[];
   onCommentStatusUpdated?: (commentId: string, newStatus: 'acknowledged' | 'done') => void;
   onRequestAssistance?: (lead: Lead) => void;
+  onOpenQA?: (lead: Lead) => void;
 }
 
 export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
@@ -40,6 +42,7 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
   pinnedComments,
   onCommentStatusUpdated,
   onRequestAssistance,
+  onOpenQA,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -115,68 +118,10 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
     return result;
   }, [leads, searchQuery, statusFilter, priorityFilter, dateRangeFilter, sortBy]);
 
-  // Export filtered leads to CSV
+  // Export filtered leads to CSV with dynamic QA columns at the end
   const handleExportFilteredCsv = () => {
     if (filteredAndSortedLeads.length === 0) return;
-
-    const headers = [
-      'Lead ID',
-      'Name',
-      'Phone',
-      'Status',
-      'Priority',
-      'Source',
-      'Created At',
-      'Last Updated',
-      'Total Calls',
-      'Business Info',
-      'All Notes & Call Logs',
-    ];
-
-    const escapeCsv = (str: string | undefined | null) => {
-      if (!str) return '""';
-      const text = String(str).replace(/"/g, '""');
-      return `"${text}"`;
-    };
-
-    const rows = filteredAndSortedLeads.map((lead) => {
-      const concatenatedNotes = [
-        lead.business_notes ? `[Base Notes]: ${lead.business_notes}` : '',
-        ...(lead.call_logs || []).map(
-          (c) =>
-            `[${c.timestamp} - ${c.outcome_tag}]: ${c.summary} | ${c.full_notes} ${
-              c.business_info ? `(Biz Info: ${c.business_info})` : ''
-            }`
-        ),
-      ]
-        .filter(Boolean)
-        .join('\n---\n');
-
-      return [
-        escapeCsv(lead.id),
-        escapeCsv(lead.name),
-        escapeCsv(lead.phone),
-        escapeCsv(lead.status),
-        escapeCsv(lead.priority),
-        escapeCsv(lead.source),
-        escapeCsv(lead.created_at),
-        escapeCsv(lead.updated_at),
-        lead.call_logs ? lead.call_logs.length : 0,
-        escapeCsv(lead.business_info || ''),
-        escapeCsv(concatenatedNotes),
-      ].join(',');
-    });
-
-    const csvContent = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `coldcall_crm_all_leads_export_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    generateLeadsCsv(filteredAndSortedLeads, 'coldcall_crm_all_leads_export');
   };
 
   const hasActiveFilters =
@@ -397,6 +342,7 @@ export const AllLeadsView: React.FC<AllLeadsViewProps> = ({
               onOpenDetail={onOpenDetail}
               onTogglePriority={onTogglePriority}
               onRequestAssistance={onRequestAssistance}
+              onOpenQA={onOpenQA}
             />
           ))}
         </div>
